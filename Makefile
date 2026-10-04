@@ -31,7 +31,7 @@ api:
 	uv run uvicorn services.api.main:create_app --factory --port 8010
 
 dashboard:
-	uv run streamlit run services/dashboard/app.py
+	PYTHONPATH=. uv run streamlit run services/dashboard/app.py
 
 up:
 	docker compose up --build

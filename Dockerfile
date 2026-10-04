@@ -14,6 +14,7 @@ WORKDIR /app
 ENV UV_NO_SYNC=1 \
     UV_LINK_MODE=copy \
     PATH="/app/.venv/bin:$PATH" \
+    PYTHONPATH="/app" \
     PYTHONUNBUFFERED=1
 
 # Dependencies first: this layer is cached until pyproject.toml / uv.lock change.
