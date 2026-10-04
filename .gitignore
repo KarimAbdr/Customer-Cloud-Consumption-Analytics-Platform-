@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+data/*
+!data/.gitkeep
+mlruns/
+*.duckdb
+*.duckdb.wal
+target/
+dbt_packages/
+logs/
+.env
