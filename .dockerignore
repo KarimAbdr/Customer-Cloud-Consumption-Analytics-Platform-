@@ -12,3 +12,5 @@ docs
 __pycache__
 dbt/target
 dbt/logs
+dist
+deploy

@@ -38,7 +38,7 @@ synthetic generators
 | Serving | FastAPI, Pydantic | Customer lookup/filtering, portfolio summary and churn prediction |
 | Dashboard | Streamlit | Thin client over the API: KPIs, segments, "call first" list, churn score |
 
-## Quick start
+## Run it yourself
 
 Requirements: Python 3.12 and [uv](https://docs.astral.sh/uv/). On macOS, LightGBM also
 needs OpenMP: `brew install libomp`.
@@ -46,15 +46,8 @@ needs OpenMP: `brew install libomp`.
 ```bash
 make install     # uv sync + pre-commit hooks
 make pipeline    # ingest -> dbt build -> train model
-make api         # serve on http://localhost:8010 (OpenAPI docs at /docs)
-make dashboard   # Streamlit UI on http://localhost:8501 (needs the API running)
-```
-
-```bash
-curl localhost:8010/health
-curl localhost:8010/customers/C000000
-curl -X POST localhost:8010/predict/churn -H 'content-type: application/json' \
-     -d '{"customer_id": "C000000"}'
+make api         # FastAPI on port 8010, interactive OpenAPI docs at /docs
+make dashboard   # Streamlit on port 8501 (needs the API running)
 ```
 
 Individual steps: `make ingest`, `make dbt`, `make train`.
@@ -68,10 +61,36 @@ make up          # builds the image, runs the pipeline, then starts API and dash
 make down        # stop (named volumes keep the data and the model)
 ```
 
-API on http://localhost:8010, dashboard on http://localhost:8501. One image serves three roles:
-`pipeline` (a one-shot `make pipeline` that fills the volumes), `api` (starts after the pipeline
-succeeded, has a health check) and `dashboard` (starts after the API is healthy). Containers run
-as a non-root user. The first build takes a few minutes.
+One image serves three roles: `pipeline` (a one-shot `make pipeline` that fills the volumes),
+`api` (starts after the pipeline succeeded, has a health check) and `dashboard` (starts after
+the API is healthy). Containers run as a non-root user. The first build takes a few minutes.
+
+### Try the API
+
+```bash
+curl localhost:8010/portfolio/summary
+curl localhost:8010/customers/C000000
+curl -X POST localhost:8010/predict/churn -H 'content-type: application/json' \
+     -d '{"customer_id": "C000000"}'
+```
+
+### Publish a free live demo (Hugging Face Spaces)
+
+The dashboard and the API run in one container on a free Docker Space: the warehouse and the
+model are built into the image (the data is synthetic), the API stays private inside the
+container and only the dashboard is public.
+
+```bash
+make space-bundle                      # writes dist/space (Dockerfile, Space README, app code)
+cd dist/space
+git init && git add . && git commit -m "Deploy"
+git remote add space https://huggingface.co/spaces/<user>/<space-name>
+git push --force space HEAD:main       # --force only for the very first push
+```
+
+Create the Space first (huggingface.co/new-space, SDK: Docker, blank template, public). The
+build takes a few minutes; the app is then served at `https://<user>-<space-name>.hf.space`.
+Re-running `make space-bundle` keeps the `.git` folder, so updates are `git commit` + `git push`.
 
 ## API
 
@@ -133,6 +152,7 @@ dbt/             dbt-duckdb project: sources, silver and gold models, data tests
 ml/              training and model loading (MLflow)
 services/api/    FastAPI service
 services/dashboard/  Streamlit dashboard (API client, metrics, page)
+deploy/          builds the Hugging Face Space bundle (`make space-bundle`)
 dags/            Airflow DAG (thin wrapper over the make targets)
 Dockerfile, docker-compose.yml   one image, three roles (pipeline, api, dashboard)
 tests/           pytest suite

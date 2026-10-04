@@ -1,4 +1,4 @@
-.PHONY: install lint format test ingest dbt train api dashboard pipeline up down
+.PHONY: install lint format test ingest dbt train api dashboard pipeline up down space-bundle
 
 install:
 	uv sync
@@ -38,5 +38,8 @@ up:
 
 down:
 	docker compose down
+
+space-bundle:
+	uv run python -m deploy.space_bundle
 
 pipeline: ingest dbt train
