@@ -17,4 +17,4 @@ test:
 	uv run pytest
 
 pipeline:
-	@echo "Pipeline is added in later phases"
+	uv run python -m data_platform.ingestion.run

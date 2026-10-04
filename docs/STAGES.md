@@ -63,3 +63,29 @@ project quickly. Each entry: what was done, why, files, commands, verification.
 - **What the tests guarantee:** determinism, one ticket row per customer per month, non-negative integer counts, Enterprise opens more tickets than SMB, churn share 8-15%, binary one-per-customer labels, churners have more tickets and a worse usage trend, no latent column in any table, empty input handled.
 - **Verify:** `make test` -> 26 passed.
 - **Known gap:** churn is a single binary label per customer (no churn date); tickets are monthly counts only (no text or severity).
+
+---
+
+## Stage 3 - Bronze layer: pandera contracts, Parquet writer, `make pipeline`
+
+- **Status:** approved
+- **What:** Ingestion entry point that generates all five bronze tables, validates them against pandera schemas and writes `data/bronze/*.parquet`.
+- **Why:** Downstream layers (DuckDB/dbt, ML, API) read files, not Python functions. Bronze is the raw layer; the schema check is the data contract at its boundary. One entry point means the future Airflow DAG is a thin wrapper and `make pipeline` works without Airflow.
+- **Design:**
+  - `build_tables` (pure generation) -> `write_bronze` (validate all, then write) -> `run_ingestion` (orchestrates) -> `main` (argparse CLI).
+  - Validate every table before writing anything, so invalid data leaves no files behind.
+  - Atomic write: `<name>.parquet.tmp` then rename, so a crash never leaves a half-written file.
+  - Defaults: 5000 customers, 180 days, seed 42 (about 900k usage rows, runs in under a second).
+  - `data/` is git-ignored; only code is versioned.
+- **Files:**
+  - `data_platform/quality/schemas.py` (new): `BRONZE_SCHEMAS` for 5 tables (types, uniqueness, value ranges, allowed categories, strict columns).
+  - `data_platform/ingestion/run.py` (new): library and CLI.
+  - `tests/test_bronze_ingestion.py` (new): 7 tests.
+  - `Makefile` (changed): `pipeline` target runs `python -m data_platform.ingestion.run`.
+- **TDD evidence:**
+  - RED: `ModuleNotFoundError: No module named 'data_platform.ingestion.run'`.
+  - GREEN: `uv run pytest` -> `33 passed`. Coverage 99% (uncovered: the `__main__` guard line).
+  - `make lint` clean; `make pipeline` writes 5 files (daily_usage 900,000 rows, 4.9 MB).
+- **What the tests guarantee:** one Parquet file per table, correct row counts, data reads back equal to what was generated, same seed gives identical output, re-run overwrites cleanly with no leftover `.tmp`, schema violation (negative usage) raises `SchemaError` and writes nothing, CLI exits 0 and prints a summary.
+- **Verify:** `make pipeline` then `ls data/bronze`; `make test` -> 33 passed.
+- **Known gap:** `check_dtype=False` in the round-trip test because Parquet may change string/datetime resolution; values are compared exactly. Support tickets cover `days // 30` months.
