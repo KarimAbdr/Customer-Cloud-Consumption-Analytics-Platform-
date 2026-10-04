@@ -107,7 +107,7 @@ all call the same targets.
 | Python lint and format | ruff |
 | Types | mypy (strict) |
 | SQL style | sqlfluff (duckdb dialect, dbt templater) |
-| Tests | pytest: unit, dbt build in a temp warehouse, API integration, compose-file guards |
+| Tests | pytest: unit, dbt build in a temp warehouse, API integration, compose-file and DAG guards |
 | CI | GitHub Actions (`.github/workflows/ci.yml`) on every push and pull request |
 
 ## Key decisions
@@ -118,8 +118,10 @@ all call the same targets.
   dashboard.
 - **LightGBM + MLflow**: strong tabular baseline with reproducible, tracked runs.
 - **API as the single access point**: consumers never read DuckDB or load the model.
-- **Pipeline without an orchestrator**: `make pipeline` runs the full flow; an Airflow DAG is
-  planned as a thin wrapper over the same entry points.
+- **Pipeline without an orchestrator**: `make pipeline` runs the full flow. The Airflow DAG
+  (`dags/customer360_pipeline.py`) is a thin wrapper: three tasks (`ingest -> dbt_build ->
+  train_model`) that only call `make ingest`, `make dbt` and `make train`, so the pipeline is
+  defined once and tests guard that the DAG stays free of logic.
 - **Dashboard talks only to the API**: aggregates are computed server-side in SQL, so the page
   never pulls thousands of rows and never touches DuckDB or the model.
 
@@ -131,6 +133,7 @@ dbt/             dbt-duckdb project: sources, silver and gold models, data tests
 ml/              training and model loading (MLflow)
 services/api/    FastAPI service
 services/dashboard/  Streamlit dashboard (API client, metrics, page)
+dags/            Airflow DAG (thin wrapper over the make targets)
 Dockerfile, docker-compose.yml   one image, three roles (pipeline, api, dashboard)
 tests/           pytest suite
 docs/STAGES.md   build log: what, why, evidence for every stage
@@ -138,6 +141,7 @@ docs/STAGES.md   build log: what, why, evidence for every stage
 
 ## Roadmap
 
-Planned, not built yet: Airflow DAG.
+Everything planned is built. Not done: an Airflow deployment (scheduler, web UI, metadata
+database); the DAG is validated by tests but was not run end to end under Airflow.
 Known gaps (no hyper-parameter search, no auth on the API) are listed per stage in
 `docs/STAGES.md`.

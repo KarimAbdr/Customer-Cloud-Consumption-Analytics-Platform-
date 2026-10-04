@@ -276,3 +276,27 @@ project quickly. Each entry: what was done, why, files, commands, verification.
   - Live run (`docker compose up -d`): `pipeline` exited 0 (ROC-AUC 0.787, PR-AUC 0.344, identical to the local run), API healthy, `/portfolio/summary` -> 5000 customers / 961 at risk, `/predict/churn` for `C000000` -> 0.427, `localhost:8501/_stcore/health` -> `ok`, dashboard script run inside the container via `AppTest` showed Customers 5,000 with no exceptions. Containers ran as uid 1000. Stack removed afterwards with `docker compose down -v`.
 - **What the tests guarantee:** the three services exist, startup ordering conditions, dashboard reaches the API by service name, pipeline never restarts, API and pipeline share both volumes, documented ports are published, all services use one image, Dockerfile switches to a non-root user, `.dockerignore` excludes local state. They check the file, not a running stack; the live run above is the end-to-end proof.
 - **Known gaps:** the image is 1.61 GB, mostly the Python dependencies themselves (venv about 980 MB: pyarrow, scipy, duckdb, mlflow, pandas, sklearn, streamlit); going lower means splitting dependencies per role (e.g. the dashboard does not need lightgbm/mlflow) or dropping libraries; the image build is not part of CI; the pipeline reruns on every `make up` (deterministic, but it rewrites the warehouse while nothing else runs); no `restart` policy or resource limits for api/dashboard; the page layout was not checked in a browser.
+
+---
+
+## Stage 12 - Airflow DAG
+
+- **Status:** approved
+- **What:** `dags/customer360_pipeline.py`: daily DAG `ingest -> dbt_build -> train_model`; `apache-airflow` 3.2.2 added as a dev dependency.
+- **Why:** An orchestrator adds schedule, retries, run history and a dependency graph, which a Makefile does not provide. The DAG is a wrapper, not a second definition of the pipeline.
+- **Design:**
+  - Each task is a `BashOperator` running one existing target (`make ingest`, `make dbt`, `make train`) from the repository root; tasks are separate so a retry reruns only the failed step.
+  - `schedule="@daily"`, `catchup=False`, `retries=2`, `retry_delay=5 min`.
+  - Airflow lives in the `dev` dependency group: `make test` / CI can import the DAG, the Docker image (`uv sync --no-dev`) does not carry it.
+  - `tests/conftest.py` points `AIRFLOW_HOME` to a temp directory, so tests never touch an existing `~/airflow` (the dev machine has one from earlier work; it was not modified).
+  - Not included on purpose: Airflow scheduler / web UI / metadata database in Docker Compose.
+- **Files:** `dags/customer360_pipeline.py`, `tests/test_airflow_dag.py` (11 tests), `tests/conftest.py`, `pyproject.toml`, `uv.lock`, `README.md`.
+- **TDD evidence:**
+  - RED: with Airflow installed, the DAG tests failed with `KeyError: 'customer360_pipeline'` (the DAG did not exist).
+  - GREEN: `tests/test_airflow_dag.py` -> `11 passed`; `make test` -> `115 passed`; `make lint` clean (mypy strict).
+  - Two test fixes on the way: mypy strict objections to Airflow's optional types, and the schedule assertion (the DAG stores an `airflow.sdk` timetable whose `expression` is `"@daily"`, not the core class).
+- **What the tests guarantee:** DAG files import without errors, the DAG is registered with exactly the three tasks, order is ingest -> dbt -> train, each task's command is exactly its `make` target (no logic in the DAG), every target exists in the Makefile, tasks run from the repository root, retries with a delay are configured, schedule is daily without catch-up.
+- **Not verified / known gaps:**
+  - End-to-end execution under Airflow: `airflow dags test customer360_pipeline` (isolated `AIRFLOW_HOME`, fresh SQLite) failed inside Airflow's own execution API (`AttributeError: 'State' object has no attribute 'svcs_registry'`) before any `make` command ran. The cause was not investigated; a plausible, unconfirmed one is that this project's pinned library versions are newer than the ones Airflow 3.2.2 is tested with. The commands themselves are the same `make` targets that `make pipeline` and the Docker `pipeline` service already ran successfully.
+  - The Docker image was not rebuilt after adding the dev dependency; Airflow is outside the `--no-dev` install, but this was not re-run.
+  - Airflow's dependency tree adds about 68 packages to `uv.lock` and some seconds to CI.
