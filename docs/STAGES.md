@@ -213,7 +213,7 @@ project quickly. Each entry: what was done, why, files, commands, verification.
   - GREEN: after the rule decision above, `All Finished!` with no violations.
   - `make lint` clean; `make test` -> `72 passed`; workflow YAML parses and uses only the commands above.
 - **Not verified locally:** the GitHub Actions run itself (needs a push to GitHub). The first run on Linux may reveal environment differences.
-- **README placeholder:** the CI badge URL contains `OWNER/REPO`; replace it after creating the GitHub repository.
+- **README badge:** points at `KarimAbdr/Customer-Cloud-Consumption-Analytics-Platform-`; the first GitHub Actions run on Linux was green (reported by the owner).
 
 ---
 

@@ -1,6 +1,6 @@
 # Customer 360 & Cloud Consumption Analytics Platform
 
-[![CI](https://github.com/OWNER/REPO/actions/workflows/ci.yml/badge.svg)](https://github.com/OWNER/REPO/actions/workflows/ci.yml)
+[![CI](https://github.com/KarimAbdr/Customer-Cloud-Consumption-Analytics-Platform-/actions/workflows/ci.yml/badge.svg)](https://github.com/KarimAbdr/Customer-Cloud-Consumption-Analytics-Platform-/actions/workflows/ci.yml)
 
 An end-to-end data and ML platform on synthetic B2B SaaS data: raw ingestion, a layered
 warehouse built with dbt, a churn model tracked in MLflow, and an API that serves both
