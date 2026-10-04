@@ -116,3 +116,26 @@ project quickly. Each entry: what was done, why, files, commands, verification.
 - **What the tests guarantee:** each silver table has exactly the expected columns in order, row counts equal bronze, no NULL `industry`, `usage_date` is DATE, and all dbt data tests (keys, categories, referential integrity) pass.
 - **Verify:** `make pipeline`; `make test` -> 41 passed.
 - **Known gap:** sqlfluff is not wired in yet (planned in the quality stage). The pytest runs the real `dbt` binary, so `make test` takes about 4 seconds longer.
+
+---
+
+## Stage 5 - Gold layer: ML features and Customer 360 view
+
+- **Status:** approved
+- **What:** Two dbt gold models: `customer_features` (one row per customer, ML features + churn target) and `customer_360` (business view for dashboard/API).
+- **Why:** Gold is the layer consumed by ML, API and dashboard. Features are computed once in SQL and reused by training and serving, which avoids training-serving skew. The project name is Customer 360: one table with the whole picture of a customer.
+- **Design:**
+  - Features: segment, employees, industry, contract term and fee; usage mean of first 30 and last 30 days and their ratio (`usage_trend_ratio`); weekend usage share; `usage_peak_ratio` (max / mean); total and monthly-average tickets.
+  - Windows are relative to each customer's own first and last usage date. Features use only the observation window; the churn label comes from a hidden variable that is not in any table, so there is no leakage.
+  - `customer_360` adds `contract_end_date`, `annual_contract_value` (fee x 12), `avg_daily_usage` and `is_at_risk` (`usage_trend_ratio < 0.85`).
+  - Models land in the `main` schema of DuckDB (no custom schema configured).
+- **Files:**
+  - `dbt/models/gold/customer_features.sql`, `dbt/models/gold/customer_360.sql`, `dbt/models/gold/schema.yml` (new); `dbt/dbt_project.yml` (gold config).
+  - `tests/test_dbt_gold.py` (new): 7 tests. `tests/dbt_helpers.py` (new): shared `build_warehouse` / `query`. `tests/test_dbt_silver.py` (refactored to use the helper). `tests/__init__.py` (new, fixes mypy duplicate-module error).
+- **TDD evidence:**
+  - RED: 7 gold tests failed with `Table with name customer_360 does not exist`; the 8 silver tests still passed after the helper refactor.
+  - GREEN: `uv run pytest` -> `48 passed`; `make pipeline` -> `dbt Done. PASS=35 ERROR=0`; `make lint` clean.
+  - Signal check on full data (5000 customers): churned vs retained mean trend ratio 0.889 vs 1.158, mean tickets 7.8 vs 4.8; churn rate 11.7%; 961 customers flagged at risk.
+- **What the tests guarantee:** exact column contracts for both tables, one row per customer, no NULL numeric features, feature values equal an independent pandas computation for 5 customers, churn rate equals silver, `is_at_risk` is exactly `trend < 0.85`, plus dbt tests (unique, not_null, relationships, accepted_values).
+- **Verify:** `make pipeline`; `make test` -> 48 passed.
+- **Known gap:** 0.85 risk threshold is a heuristic, not model output; the ML stage will provide real churn probabilities. Features are computed once over the whole window (no train/test time split yet).

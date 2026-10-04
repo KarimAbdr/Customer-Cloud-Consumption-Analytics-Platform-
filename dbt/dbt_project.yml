@@ -9,3 +9,5 @@ models:
   customer360:
     silver:
       +materialized: table
+    gold:
+      +materialized: table

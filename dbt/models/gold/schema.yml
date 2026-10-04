@@ -1,0 +1,32 @@
+version: 2
+
+models:
+  - name: customer_features
+    description: One row per customer with ML features and the churn target.
+    columns:
+      - name: customer_id
+        data_tests:
+          - unique
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_customers')
+                field: customer_id
+      - name: usage_trend_ratio
+        description: Mean usage of the last 30 days divided by the first 30 days.
+        data_tests: [not_null]
+      - name: is_churned
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [true, false]
+                quote: false
+
+  - name: customer_360
+    description: Business-facing customer view for the dashboard and API.
+    columns:
+      - name: customer_id
+        data_tests: [unique, not_null]
+      - name: is_at_risk
+        data_tests: [not_null]
