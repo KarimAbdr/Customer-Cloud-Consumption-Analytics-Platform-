@@ -1,4 +1,4 @@
-.PHONY: install lint format test ingest dbt train api dashboard pipeline
+.PHONY: install lint format test ingest dbt train api dashboard pipeline up down
 
 install:
 	uv sync
@@ -32,5 +32,11 @@ api:
 
 dashboard:
 	uv run streamlit run services/dashboard/app.py
+
+up:
+	docker compose up --build
+
+down:
+	docker compose down
 
 pipeline: ingest dbt train

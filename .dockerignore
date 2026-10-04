@@ -1,0 +1,14 @@
+.venv
+.git
+.github
+data
+mlruns
+tests
+docs
+.mypy_cache
+.ruff_cache
+.pytest_cache
+.coverage
+__pycache__
+dbt/target
+dbt/logs

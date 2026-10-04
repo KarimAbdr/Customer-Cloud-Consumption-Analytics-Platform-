@@ -254,3 +254,25 @@ project quickly. Each entry: what was done, why, files, commands, verification.
   - Live check, real warehouse: `/portfolio/summary` -> 5000 customers, 961 at risk (19.2%), revenue at risk 40,239,553; the dashboard script run via `streamlit.testing.AppTest` shows Customers 5,000, no exceptions, no sampling caption.
 - **What the tests guarantee:** the summary equals an independent SQL count per segment and in total, segments add up to the total, share = at_risk / customers, empty warehouse gives zeros, `order=value` returns the true top 10 across the portfolio, invalid `order` gives 422, the client parses the summary and honours `order`, KPIs for a segment selection count only that selection.
 - **Known gap:** the page layout was not checked in a browser; the detail section still issues API calls on every rerun (no caching); revenue-at-risk uses annual contract value of at-risk customers (a business definition, not a forecast).
+
+---
+
+## Stage 11 - Docker Compose
+
+- **Status:** approved
+- **What:** `Dockerfile`, `.dockerignore`, `docker-compose.yml`; `make up` / `make down`.
+- **Why:** One command runs the whole platform without installing Python, uv or libomp; the container is the deployable unit.
+- **Design:**
+  - One image, three roles by command: `pipeline` (`make pipeline`, one-shot, `restart: "no"`), `api` (uvicorn on 8010) and `dashboard` (Streamlit on 8501, `API_URL=http://api:8010`).
+  - Startup order: `api` waits for `pipeline` with `service_completed_successfully`; `dashboard` waits for `api` with `service_healthy` (health check calls the existing `/health`).
+  - Warehouse (`/app/data`) and model store (`/app/mlruns`) are named volumes, not part of the image. The pipeline is the single writer; the API only reads.
+  - The pipeline runs `make pipeline`, so the container uses the same definition as the local flow (`uv run --no-sync`, dependencies baked in by `uv sync --locked --no-dev`). Dependency layer is cached until `pyproject.toml` / `uv.lock` change.
+  - Non-root user (uid 1000); `.dockerignore` keeps `.venv`, `data`, `mlruns`, `.git`, tests and docs out of the image. `libgomp1` is installed for LightGBM.
+- **Files:** `Dockerfile`, `.dockerignore`, `docker-compose.yml`, `tests/test_compose.py` (10 tests), `Makefile`, `README.md`, `pyproject.toml` / `uv.lock` (dev: `pyyaml`, `types-pyyaml`).
+- **TDD evidence:**
+  - RED: `docker compose config` -> `no configuration file provided: not found`; `tests/test_compose.py` -> `FileNotFoundError` for `docker-compose.yml`.
+  - GREEN: `tests/test_compose.py` -> `10 passed`; `docker compose config -q` valid; `docker compose build` succeeded (3m50s cold).
+  - Image size: first version 4.38 GB. `docker history` showed two avoidable layers: uv's package cache left inside the `uv sync` layer (about 1.1 GB) and `chown -R /app` copying the whole venv into a new layer (1.03 GB). Fixed with `uv sync --no-cache` and chowning only `data`, `mlruns`, `dbt`. Result: 1.61 GB; the full live run was repeated on the smaller image (pipeline 35/35 dbt, ROC-AUC 0.787, API, dashboard, uid 1000) with the same numbers.
+  - Live run (`docker compose up -d`): `pipeline` exited 0 (ROC-AUC 0.787, PR-AUC 0.344, identical to the local run), API healthy, `/portfolio/summary` -> 5000 customers / 961 at risk, `/predict/churn` for `C000000` -> 0.427, `localhost:8501/_stcore/health` -> `ok`, dashboard script run inside the container via `AppTest` showed Customers 5,000 with no exceptions. Containers ran as uid 1000. Stack removed afterwards with `docker compose down -v`.
+- **What the tests guarantee:** the three services exist, startup ordering conditions, dashboard reaches the API by service name, pipeline never restarts, API and pipeline share both volumes, documented ports are published, all services use one image, Dockerfile switches to a non-root user, `.dockerignore` excludes local state. They check the file, not a running stack; the live run above is the end-to-end proof.
+- **Known gaps:** the image is 1.61 GB, mostly the Python dependencies themselves (venv about 980 MB: pyarrow, scipy, duckdb, mlflow, pandas, sklearn, streamlit); going lower means splitting dependencies per role (e.g. the dashboard does not need lightgbm/mlflow) or dropping libraries; the image build is not part of CI; the pipeline reruns on every `make up` (deterministic, but it rewrites the warehouse while nothing else runs); no `restart` policy or resource limits for api/dashboard; the page layout was not checked in a browser.
