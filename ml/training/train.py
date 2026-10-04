@@ -19,23 +19,12 @@ from lightgbm import LGBMClassifier
 from sklearn.metrics import average_precision_score, roc_auc_score
 from sklearn.model_selection import train_test_split
 
+from ml.training.model import ChurnModel
+
 ID_COLUMN = "customer_id"
 TARGET_COLUMN = "is_churned"
 CATEGORICAL_COLUMNS = ("segment", "industry")
 MODEL_ARTIFACT = "churn_model"
-
-
-@dataclass(frozen=True)
-class ChurnModel:
-    """Estimator plus the category levels seen in training.
-
-    Fixing the levels keeps training and serving encodings identical; categories
-    unseen at serving time become missing values instead of raising.
-    """
-
-    estimator: LGBMClassifier
-    feature_names: list[str]
-    categories: dict[str, list[str]]
 
 
 @dataclass(frozen=True)

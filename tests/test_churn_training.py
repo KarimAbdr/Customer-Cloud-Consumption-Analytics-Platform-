@@ -1,3 +1,6 @@
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -5,6 +8,7 @@ import pandas as pd
 import pytest
 from mlflow.tracking import MlflowClient
 
+from ml.inference.registry import load_latest_model
 from ml.training.train import (
     load_features,
     load_model,
@@ -14,7 +18,7 @@ from ml.training.train import (
     train_and_log,
     train_model,
 )
-from tests.dbt_helpers import build_warehouse
+from tests.dbt_helpers import REPO_ROOT, build_warehouse
 
 SEED = 5
 
@@ -79,3 +83,31 @@ def test_logged_model_gives_same_predictions_after_reload(
     np.testing.assert_allclose(
         predict_proba(reloaded, features), predict_proba(original, features), rtol=1e-9
     )
+
+
+def test_model_trained_via_cli_loads_in_a_different_process(tmp_path: Path) -> None:
+    """Regression: a model pickled from `python -m ...` must not depend on `__main__`."""
+    db_path, _ = build_warehouse(tmp_path / "wh", 300, 60, seed=SEED)
+    tracking_dir = tmp_path / "mlruns"
+    env = {**os.environ, "MLFLOW_DISABLE_AGENT_HINT": "1"}
+    train = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "ml.training.train",
+            "--db-path",
+            str(db_path),
+            "--tracking-dir",
+            str(tracking_dir),
+            "--experiment",
+            "cli",
+        ],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert train.returncode == 0, train.stderr
+    model = load_latest_model(tracking_dir, "cli")
+    assert len(predict_proba(model, load_features(db_path).head(2))) == 2

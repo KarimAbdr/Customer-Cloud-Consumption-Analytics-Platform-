@@ -166,3 +166,31 @@ project quickly. Each entry: what was done, why, files, commands, verification.
 - **What the tests guarantee:** no id/target in features, same seed gives identical predictions, hold-out ROC-AUC between 0.70 and 0.95 (above chance, and not suspiciously perfect, which would indicate leakage), probabilities in [0, 1], unseen categories do not break prediction, MLflow run contains `roc_auc`, `pr_auc` and the seed, and a model reloaded from MLflow predicts identically.
 - **Verify:** `make train` prints `run_id`, `roc_auc`, `pr_auc`; `make test` -> 55 passed.
 - **Known gap:** no hyper-parameter search and no time-based split (data is a single synthetic window); metrics come from one seed; no model registry or promotion step yet.
+
+---
+
+## Stage 7 - Serving: FastAPI service
+
+- **Status:** approved
+- **What:** `services/api` with `GET /health`, `GET /customers/{id}`, `GET /customers?segment=&at_risk=&limit=` and `POST /predict/churn`. Run with `make api` (port 8010).
+- **Why:** Dashboard and other consumers should not read DuckDB or load the model themselves. The API is the single access point and shows the model running as a service, not only trained in a notebook.
+- **Design:**
+  - Layers: routes (thin) -> `CustomerRepository` (read-only DuckDB, parameterized SQL) and `ChurnPredictor` (model wrapper); Pydantic schemas define the response contract; OpenAPI at `/docs` is generated from the types.
+  - Dependencies are injected: `create_app(repository, predictor)` for tests, environment-based defaults (`DUCKDB_PATH`, `MLFLOW_TRACKING_DIR`, `MLFLOW_EXPERIMENT`) in production. Start with `uvicorn services.api.main:create_app --factory`.
+  - The model is loaded once at startup from the latest MLflow run (`ml/inference/registry.py`); missing model -> `/health` reports `model_loaded: false` and `/predict/churn` answers 503.
+  - Prediction reads features from `customer_features`, the same table used for training (no training-serving skew).
+  - Errors: unknown customer 404, invalid `segment` / `limit` 422 (validated by Pydantic types).
+- **Bug found by live run, fixed with a regression test:** a model trained by `python -m ml.training.train` was pickled with the class `__main__.ChurnModel`, so the API process crashed at startup (`AssertionError` in `load_model`). Unit tests missed it because they trained via import. Fix: `ChurnModel` moved to `ml/training/model.py` (never run as `__main__`). New test `test_model_trained_via_cli_loads_in_a_different_process` failed first (RED), passes now.
+- **Environment note:** port 8000 was already used by a Docker container on the dev machine, so the API uses 8010.
+- **Files:**
+  - `services/api/{main,schemas,repository,predictor}.py`, `ml/inference/registry.py`, `ml/training/model.py` (new); `ml/training/train.py` (class moved out).
+  - `tests/test_api.py` (new, 16 tests), `tests/test_churn_training.py` (+1 regression test).
+  - `Makefile` (`api` target), `pyproject.toml` / `uv.lock` (`fastapi`, `uvicorn`, `httpx`).
+- **TDD evidence:**
+  - RED: `ModuleNotFoundError: No module named 'ml.inference.registry'`.
+  - GREEN: 16 API tests passed on first implementation; the CLI regression test was added after a live smoke test exposed the pickle bug (RED `AssertionError`, then GREEN).
+  - Final: `uv run pytest` -> `72 passed`; `make lint` clean.
+  - Live smoke test on the real warehouse: `/health` -> `{"status":"ok","model_loaded":true}`; `/customers/C000000` returned the profile; `/predict/churn` returned `churn_probability` 0.427; unknown id -> 404.
+- **What the tests guarantee:** health with and without a model, customer payload has exactly the contract fields, 404 for unknown customer (message contains the id), segment and at-risk filters, limit respected, 422 for bad segment / limit 0 / limit 1001, prediction equals `predict_proba` of the model for the same customer, 404 unknown customer on predict, 503 without a model, 422 for a missing body field, the latest-model loader returns a usable model and fails clearly on an empty store.
+- **Verify:** `make pipeline`, then `make api` and `curl localhost:8010/health`; `make test` -> 72 passed.
+- **Known gap:** no authentication, rate limiting or request logging; no batch prediction endpoint; model is only reloaded on restart.
