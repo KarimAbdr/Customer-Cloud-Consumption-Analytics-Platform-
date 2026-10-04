@@ -214,3 +214,22 @@ project quickly. Each entry: what was done, why, files, commands, verification.
   - `make lint` clean; `make test` -> `72 passed`; workflow YAML parses and uses only the commands above.
 - **Not verified locally:** the GitHub Actions run itself (needs a push to GitHub). The first run on Linux may reveal environment differences.
 - **README placeholder:** the CI badge URL contains `OWNER/REPO`; replace it after creating the GitHub repository.
+
+---
+
+## Stage 9 - Streamlit dashboard
+
+- **Status:** approved
+- **What:** `services/dashboard` with an API client, pure portfolio metrics and a thin Streamlit page. Run with `make dashboard` (port 8501; needs `make api` on 8010, override with `API_URL`).
+- **Why:** Gives the platform a business-facing surface: portfolio KPIs, segment breakdown, "call first" list of at-risk customers by contract value, and a customer detail with churn probability.
+- **Design:**
+  - The dashboard only talks to the API (`ApiClient`, httpx); it never opens DuckDB or loads the model.
+  - `metrics.py` holds all calculations as pure pandas functions; `app.py` only renders. Streamlit code is hard to unit-test, so everything breakable lives outside it.
+  - `ApiClient` returns the API's own Pydantic models, so a contract change breaks a test instead of the page. Unreachable API / 5xx raise `ApiUnavailableError` (page shows a hint to run `make api`); unknown customer or missing model return `None`.
+- **Files:** `services/dashboard/{client,metrics,app}.py`, `tests/test_dashboard_client.py` (10 tests), `tests/test_dashboard_metrics.py` (8 tests), `Makefile`, `pyproject.toml`, `uv.lock` (`streamlit`).
+- **TDD evidence:**
+  - RED: both new test files failed at collection (modules did not exist).
+  - GREEN: `uv run pytest tests/test_dashboard_*.py` -> `18 passed`; `make lint` clean.
+  - Live check on the real warehouse: the page script was executed with `streamlit.testing.AppTest` against a running API: no exceptions, metrics Customers 1,000 / At risk 198 / share 19.8% / revenue at risk 8,889,850 / churn probability 42.7% for `C000000`.
+- **What the tests guarantee:** KPI counts, share and revenue at risk, empty portfolio gives zeros, one summary row per segment in business order (SMB, MID_MARKET, ENTERPRISE), priority list contains only at-risk customers sorted by contract value and respects `top`; client parses real API responses, filters by segment, 404 -> `None`, no model -> `None`, unreachable API and 500 raise a clear error, `API_URL` is honoured.
+- **Known gap:** the API caps `limit` at 1000, so with 5,000 customers the dashboard shows the first 1,000 (the page says so). A proper fix is an aggregate endpoint (`GET /portfolio/summary`) in the API. The Streamlit page itself has no automated test in CI beyond the metrics and client tests; the visual layout was not checked in a browser.

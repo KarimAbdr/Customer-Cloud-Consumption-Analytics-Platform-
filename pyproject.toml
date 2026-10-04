@@ -16,6 +16,7 @@ dependencies = [
     "pyarrow>=25.0.1",
     "pydantic>=2.13.5",
     "scikit-learn>=1.9.1",
+    "streamlit>=1.65.0",
     "uvicorn>=0.54.0",
 ]
 

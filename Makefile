@@ -1,4 +1,4 @@
-.PHONY: install lint format test ingest dbt train api pipeline
+.PHONY: install lint format test ingest dbt train api dashboard pipeline
 
 install:
 	uv sync
@@ -29,5 +29,8 @@ train:
 
 api:
 	uv run uvicorn services.api.main:create_app --factory --port 8010
+
+dashboard:
+	uv run streamlit run services/dashboard/app.py
 
 pipeline: ingest dbt train
