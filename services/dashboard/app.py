@@ -3,21 +3,22 @@
 import pandas as pd
 import streamlit as st
 
+from services.api.schemas import CustomerOut, PortfolioSummaryOut
 from services.dashboard.client import ApiClient, ApiUnavailableError
-from services.dashboard.metrics import (
-    SEGMENT_ORDER,
-    at_risk_priority,
-    portfolio_kpis,
-    segment_summary,
-)
+from services.dashboard.metrics import SEGMENT_ORDER, kpis_for, segment_frame
 
-PORTFOLIO_LIMIT = 1000  # API maximum
+TOP_AT_RISK = 20
 
 
 @st.cache_data(ttl=60)
-def load_portfolio() -> pd.DataFrame:
-    customers = ApiClient.from_env().customers(limit=PORTFOLIO_LIMIT)
-    return pd.DataFrame([c.model_dump() for c in customers])
+def load_summary() -> PortfolioSummaryOut:
+    return ApiClient.from_env().summary()
+
+
+@st.cache_data(ttl=60)
+def load_priority_list() -> list[CustomerOut]:
+    """At-risk customers across the whole portfolio, biggest contract first."""
+    return ApiClient.from_env().customers(at_risk=True, order="value", limit=TOP_AT_RISK)
 
 
 def main() -> None:
@@ -25,24 +26,19 @@ def main() -> None:
     st.title("Customer 360")
 
     try:
-        portfolio = load_portfolio()
+        summary = load_summary()
+        priority = load_priority_list()
     except ApiUnavailableError as error:
         st.error(f"{error}. Start the API with `make api`.")
         return
-    if portfolio.empty:
-        st.warning("The API returned no customers. Run `make pipeline` first.")
+    if summary.customers == 0:
+        st.warning("The portfolio is empty. Run `make pipeline` first.")
         return
 
-    if len(portfolio) >= PORTFOLIO_LIMIT:
-        st.caption(
-            f"Numbers cover the first {PORTFOLIO_LIMIT:,} customers returned by the API "
-            "(its page limit), not necessarily the whole portfolio."
-        )
+    selected = st.sidebar.multiselect("Segment", SEGMENT_ORDER, default=SEGMENT_ORDER)
+    segments = segment_frame(summary)
 
-    segments = st.sidebar.multiselect("Segment", SEGMENT_ORDER, default=SEGMENT_ORDER)
-    view = portfolio[portfolio["segment"].isin(segments)]
-
-    kpis = portfolio_kpis(view)
+    kpis = kpis_for(segments, selected)
     columns = st.columns(4)
     columns[0].metric("Customers", f"{kpis.customers:,}")
     columns[1].metric("At risk", f"{kpis.at_risk:,}")
@@ -50,11 +46,13 @@ def main() -> None:
     columns[3].metric("Annual revenue at risk", f"{kpis.annual_revenue_at_risk:,.0f}")
 
     st.subheader("Segments")
-    summary = segment_summary(view)
-    st.bar_chart(summary, x="segment", y=["customers", "at_risk"])
+    st.bar_chart(
+        segments[segments["segment"].isin(selected)], x="segment", y=["customers", "at_risk"]
+    )
 
     st.subheader("Call first: at-risk customers by contract value")
-    st.dataframe(at_risk_priority(view), hide_index=True)
+    table = pd.DataFrame([c.model_dump() for c in priority])
+    st.dataframe(table[table["segment"].isin(selected)], hide_index=True)
 
     st.subheader("Customer detail")
     customer_id = st.text_input("Customer id", value="C000000")

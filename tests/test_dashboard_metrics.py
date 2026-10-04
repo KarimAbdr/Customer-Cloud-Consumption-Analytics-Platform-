@@ -1,54 +1,54 @@
 import pandas as pd
-import pytest
 
-from services.dashboard.metrics import at_risk_priority, portfolio_kpis, segment_summary
+from services.api.schemas import PortfolioSummaryOut, SegmentSummaryOut
+from services.dashboard.metrics import kpis_for, segment_frame
 
 
-def _customers() -> pd.DataFrame:
-    return pd.DataFrame(
-        {
-            "customer_id": ["A", "B", "C", "D"],
-            "segment": ["SMB", "SMB", "ENTERPRISE", "ENTERPRISE"],
-            "annual_contract_value": [1_000.0, 3_000.0, 50_000.0, 70_000.0],
-            "is_at_risk": [True, False, True, False],
-            "is_churned": [False, False, True, False],
-        }
+def _summary() -> PortfolioSummaryOut:
+    return PortfolioSummaryOut(
+        customers=10,
+        at_risk=3,
+        at_risk_share=0.3,
+        annual_revenue_at_risk=51_000.0,
+        segments=[
+            SegmentSummaryOut(
+                segment="ENTERPRISE", customers=2, at_risk=1, annual_revenue_at_risk=50_000.0
+            ),
+            SegmentSummaryOut(
+                segment="SMB", customers=8, at_risk=2, annual_revenue_at_risk=1_000.0
+            ),
+        ],
     )
 
 
-def test_kpis_count_customers_and_at_risk_share() -> None:
-    kpis = portfolio_kpis(_customers())
-    assert kpis.customers == 4
-    assert kpis.at_risk == 2
+def test_segment_frame_uses_business_order_not_alphabet_or_api_order() -> None:
+    assert list(segment_frame(_summary())["segment"]) == ["SMB", "ENTERPRISE"]
+
+
+def test_kpis_for_all_segments_add_up_to_the_portfolio() -> None:
+    kpis = kpis_for(segment_frame(_summary()), ["SMB", "ENTERPRISE"])
+    assert (kpis.customers, kpis.at_risk) == (10, 3)
+    assert kpis.annual_revenue_at_risk == 51_000.0
+    assert kpis.at_risk_share == 0.3
+
+
+def test_kpis_for_a_segment_selection_only_count_that_selection() -> None:
+    kpis = kpis_for(segment_frame(_summary()), ["ENTERPRISE"])
+    assert (kpis.customers, kpis.at_risk) == (2, 1)
     assert kpis.at_risk_share == 0.5
+    assert kpis.annual_revenue_at_risk == 50_000.0
 
 
-def test_kpis_sum_revenue_at_risk() -> None:
-    assert portfolio_kpis(_customers()).annual_revenue_at_risk == 51_000.0
-
-
-def test_kpis_on_empty_portfolio_are_zero_not_an_error() -> None:
-    kpis = portfolio_kpis(_customers().iloc[0:0])
+def test_kpis_for_an_empty_selection_are_zero_not_an_error() -> None:
+    kpis = kpis_for(segment_frame(_summary()), [])
     assert (kpis.customers, kpis.at_risk, kpis.at_risk_share) == (0, 0, 0.0)
     assert kpis.annual_revenue_at_risk == 0.0
 
 
-def test_segment_summary_has_one_row_per_segment() -> None:
-    summary = segment_summary(_customers()).set_index("segment")
-    assert summary.loc["SMB", "customers"] == 2
-    assert summary.loc["ENTERPRISE", "at_risk"] == 1
-    assert summary.loc["ENTERPRISE", "annual_contract_value"] == 120_000.0
-
-
-def test_segment_summary_uses_business_order_not_alphabet() -> None:
-    assert list(segment_summary(_customers())["segment"]) == ["SMB", "ENTERPRISE"]
-
-
-def test_at_risk_priority_lists_only_at_risk_biggest_contract_first() -> None:
-    ranked = at_risk_priority(_customers())
-    assert list(ranked["customer_id"]) == ["C", "A"]
-
-
-@pytest.mark.parametrize("top", [1, 5])
-def test_at_risk_priority_respects_top(top: int) -> None:
-    assert len(at_risk_priority(_customers(), top=top)) == min(top, 2)
+def test_segment_frame_of_an_empty_portfolio_is_an_empty_frame() -> None:
+    empty = PortfolioSummaryOut(
+        customers=0, at_risk=0, at_risk_share=0.0, annual_revenue_at_risk=0.0, segments=[]
+    )
+    frame = segment_frame(empty)
+    assert isinstance(frame, pd.DataFrame)
+    assert frame.empty

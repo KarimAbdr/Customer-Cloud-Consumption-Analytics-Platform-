@@ -1,8 +1,11 @@
-"""Pure portfolio calculations for the dashboard (no Streamlit, no HTTP)."""
+"""Pure calculations on the API's portfolio summary (no Streamlit, no HTTP)."""
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 import pandas as pd
+
+from services.api.schemas import PortfolioSummaryOut
 
 SEGMENT_ORDER = ["SMB", "MID_MARKET", "ENTERPRISE"]
 
@@ -15,30 +18,26 @@ class PortfolioKpis:
     annual_revenue_at_risk: float
 
 
-def portfolio_kpis(customers: pd.DataFrame) -> PortfolioKpis:
-    at_risk = customers[customers["is_at_risk"]]
-    total = len(customers)
+def segment_frame(summary: PortfolioSummaryOut) -> pd.DataFrame:
+    """One row per segment in business order."""
+    frame = pd.DataFrame(
+        [s.model_dump() for s in summary.segments],
+        columns=["segment", "customers", "at_risk", "annual_revenue_at_risk"],
+    )
+    rank = frame["segment"].map({name: i for i, name in enumerate(SEGMENT_ORDER)})
+    return (
+        frame.assign(_rank=rank).sort_values("_rank").drop(columns="_rank").reset_index(drop=True)
+    )
+
+
+def kpis_for(segments: pd.DataFrame, selected: Sequence[str]) -> PortfolioKpis:
+    """KPIs of the chosen segments; the summary is already aggregated server-side."""
+    chosen = segments[segments["segment"].isin(selected)]
+    customers = int(chosen["customers"].sum())
+    at_risk = int(chosen["at_risk"].sum())
     return PortfolioKpis(
-        customers=total,
-        at_risk=len(at_risk),
-        at_risk_share=len(at_risk) / total if total else 0.0,
-        annual_revenue_at_risk=float(at_risk["annual_contract_value"].sum()),
+        customers=customers,
+        at_risk=at_risk,
+        at_risk_share=at_risk / customers if customers else 0.0,
+        annual_revenue_at_risk=float(chosen["annual_revenue_at_risk"].sum()),
     )
-
-
-def segment_summary(customers: pd.DataFrame) -> pd.DataFrame:
-    grouped = customers.groupby("segment", as_index=False).agg(
-        customers=("customer_id", "count"),
-        at_risk=("is_at_risk", "sum"),
-        annual_contract_value=("annual_contract_value", "sum"),
-    )
-    grouped["segment"] = pd.Categorical(grouped["segment"], categories=SEGMENT_ORDER, ordered=True)
-    ordered = grouped.sort_values("segment").reset_index(drop=True)
-    ordered["segment"] = ordered["segment"].astype(str)
-    return ordered
-
-
-def at_risk_priority(customers: pd.DataFrame, top: int = 20) -> pd.DataFrame:
-    """At-risk customers, biggest contract first: who to call first."""
-    at_risk = customers[customers["is_at_risk"]]
-    return at_risk.sort_values("annual_contract_value", ascending=False).head(top)

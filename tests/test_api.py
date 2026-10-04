@@ -1,6 +1,7 @@
 from collections.abc import Iterator
 from pathlib import Path
 
+import duckdb
 import pytest
 from fastapi.testclient import TestClient
 
@@ -10,7 +11,7 @@ from ml.training.train import load_features, predict_proba, train_and_log
 from services.api.main import create_app
 from services.api.predictor import ChurnPredictor
 from services.api.repository import CustomerRepository
-from tests.dbt_helpers import build_warehouse
+from tests.dbt_helpers import build_warehouse, query
 
 SEED = 11
 EXPERIMENT = "api-test"
@@ -143,3 +144,77 @@ def test_predict_without_model_returns_503(client_without_model: TestClient) -> 
 
 def test_predict_rejects_missing_customer_id(client: TestClient) -> None:
     assert client.post("/predict/churn", json={}).status_code == 422
+
+
+def _expected_summary(env: tuple[Path, Path]) -> dict[str, tuple[int, int, float]]:
+    """Independent aggregate per segment: (customers, at_risk, revenue at risk)."""
+    rows = query(
+        env[0],
+        "select segment, count(*), count(*) filter (where is_at_risk), "
+        "coalesce(sum(annual_contract_value) filter (where is_at_risk), 0) "
+        "from customer_360 group by segment",
+    )
+    return {str(r[0]): (int(str(r[1])), int(str(r[2])), float(str(r[3]))) for r in rows}
+
+
+def test_portfolio_summary_totals_match_an_independent_count(
+    client: TestClient, env: tuple[Path, Path]
+) -> None:
+    expected = _expected_summary(env)
+    body = client.get("/portfolio/summary").json()
+    assert body["customers"] == sum(v[0] for v in expected.values()) == 600
+    assert body["at_risk"] == sum(v[1] for v in expected.values())
+    assert body["annual_revenue_at_risk"] == pytest.approx(sum(v[2] for v in expected.values()))
+    assert body["at_risk_share"] == pytest.approx(body["at_risk"] / body["customers"])
+
+
+def test_portfolio_summary_segments_match_and_add_up(
+    client: TestClient, env: tuple[Path, Path]
+) -> None:
+    expected = _expected_summary(env)
+    body = client.get("/portfolio/summary").json()
+    by_segment = {s["segment"]: s for s in body["segments"]}
+    assert set(by_segment) == set(expected)
+    for segment, (customers, at_risk, revenue) in expected.items():
+        assert by_segment[segment]["customers"] == customers
+        assert by_segment[segment]["at_risk"] == at_risk
+        assert by_segment[segment]["annual_revenue_at_risk"] == pytest.approx(revenue)
+    assert sum(s["customers"] for s in body["segments"]) == body["customers"]
+
+
+def test_portfolio_summary_of_an_empty_warehouse_is_zeros(tmp_path: Path) -> None:
+    db_path = tmp_path / "empty.duckdb"
+    with duckdb.connect(str(db_path)) as con:
+        con.execute(
+            "create table customer_360 (segment varchar, is_at_risk boolean, "
+            "annual_contract_value double)"
+        )
+    with TestClient(create_app(CustomerRepository(db_path), None)) as empty_client:
+        body = empty_client.get("/portfolio/summary").json()
+    assert body == {
+        "customers": 0,
+        "at_risk": 0,
+        "at_risk_share": 0.0,
+        "annual_revenue_at_risk": 0.0,
+        "segments": [],
+    }
+
+
+def test_list_can_be_ordered_by_contract_value_across_the_whole_portfolio(
+    client: TestClient, env: tuple[Path, Path]
+) -> None:
+    top = query(
+        env[0],
+        "select customer_id from customer_360 order by annual_contract_value desc, customer_id "
+        "limit 10",
+    )
+    by_id = client.get("/customers", params={"limit": 10}).json()
+    rows = client.get("/customers", params={"order": "value", "limit": 10}).json()
+    assert [r["customer_id"] for r in by_id] != [r[0] for r in top]  # the test can tell them apart
+    assert [r["customer_id"] for r in rows] == [r[0] for r in top]
+    values = [r["annual_contract_value"] for r in rows]
+    assert values == sorted(values, reverse=True)
+
+
+def test_invalid_order_returns_422(client: TestClient) -> None:
+    assert client.get("/customers", params={"order": "random"}).status_code == 422

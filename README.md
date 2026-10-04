@@ -35,7 +35,8 @@ synthetic generators
 | Silver | dbt-duckdb | Types, deduplicates and cleans; dbt tests guard keys and relations |
 | Gold | dbt-duckdb | `customer_features` (ML input) and `customer_360` (business view) |
 | ML | LightGBM, MLflow | Churn model, metrics and artifacts tracked per run |
-| Serving | FastAPI, Pydantic | Customer lookup/filtering and churn prediction |
+| Serving | FastAPI, Pydantic | Customer lookup/filtering, portfolio summary and churn prediction |
+| Dashboard | Streamlit | Thin client over the API: KPIs, segments, "call first" list, churn score |
 
 ## Quick start
 
@@ -46,6 +47,7 @@ needs OpenMP: `brew install libomp`.
 make install     # uv sync + pre-commit hooks
 make pipeline    # ingest -> dbt build -> train model
 make api         # serve on http://localhost:8010 (OpenAPI docs at /docs)
+make dashboard   # Streamlit UI on http://localhost:8501 (needs the API running)
 ```
 
 ```bash
@@ -63,7 +65,8 @@ Individual steps: `make ingest`, `make dbt`, `make train`.
 |----------|---------|
 | `GET /health` | Service status and whether a model is loaded |
 | `GET /customers/{id}` | Customer 360 profile (404 if unknown) |
-| `GET /customers?segment=&at_risk=&limit=` | Filtered customer list |
+| `GET /customers?segment=&at_risk=&order=&limit=` | Filtered list; `order=value` sorts by contract value |
+| `GET /portfolio/summary` | Portfolio KPIs and per-segment breakdown, aggregated in SQL over all customers |
 | `POST /predict/churn` | Churn probability for a customer (503 if no model) |
 
 ## Model
@@ -103,6 +106,8 @@ all call the same targets.
 - **API as the single access point**: consumers never read DuckDB or load the model.
 - **Pipeline without an orchestrator**: `make pipeline` runs the full flow; an Airflow DAG is
   planned as a thin wrapper over the same entry points.
+- **Dashboard talks only to the API**: aggregates are computed server-side in SQL, so the page
+  never pulls thousands of rows and never touches DuckDB or the model.
 
 ## Repository layout
 
@@ -111,12 +116,13 @@ data_platform/   ingestion (synthetic data, Parquet writer) and pandera contract
 dbt/             dbt-duckdb project: sources, silver and gold models, data tests
 ml/              training and model loading (MLflow)
 services/api/    FastAPI service
+services/dashboard/  Streamlit dashboard (API client, metrics, page)
 tests/           pytest suite
 docs/STAGES.md   build log: what, why, evidence for every stage
 ```
 
 ## Roadmap
 
-Planned, not built yet: Streamlit dashboard on top of the API, Docker Compose, Airflow DAG.
+Planned, not built yet: Docker Compose, Airflow DAG.
 Known gaps (no hyper-parameter search, no auth on the API) are listed per stage in
 `docs/STAGES.md`.

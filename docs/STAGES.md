@@ -232,4 +232,25 @@ project quickly. Each entry: what was done, why, files, commands, verification.
   - GREEN: `uv run pytest tests/test_dashboard_*.py` -> `18 passed`; `make lint` clean.
   - Live check on the real warehouse: the page script was executed with `streamlit.testing.AppTest` against a running API: no exceptions, metrics Customers 1,000 / At risk 198 / share 19.8% / revenue at risk 8,889,850 / churn probability 42.7% for `C000000`.
 - **What the tests guarantee:** KPI counts, share and revenue at risk, empty portfolio gives zeros, one summary row per segment in business order (SMB, MID_MARKET, ENTERPRISE), priority list contains only at-risk customers sorted by contract value and respects `top`; client parses real API responses, filters by segment, 404 -> `None`, no model -> `None`, unreachable API and 500 raise a clear error, `API_URL` is honoured.
-- **Known gap:** the API caps `limit` at 1000, so with 5,000 customers the dashboard shows the first 1,000 (the page says so). A proper fix is an aggregate endpoint (`GET /portfolio/summary`) in the API. The Streamlit page itself has no automated test in CI beyond the metrics and client tests; the visual layout was not checked in a browser.
+- **Known gap (closed in Stage 10):** the API capped `limit` at 1000, so the dashboard showed the first 1,000 of 5,000 customers. The Streamlit page itself has no automated test in CI beyond the metrics and client tests; the visual layout was not checked in a browser.
+
+---
+
+## Stage 10 - Portfolio summary endpoint
+
+- **Status:** approved
+- **What:** `GET /portfolio/summary` (customers, at-risk count and share, annual revenue at risk, per-segment breakdown) and `order=value` on `GET /customers`. The dashboard now uses both.
+- **Why:** The dashboard showed KPIs over the first 1,000 customers only (API page limit) while the warehouse holds 5,000. Aggregation belongs on the server, in SQL, over the whole table.
+- **Design:**
+  - `CustomerRepository.portfolio_summary` runs one `group by segment` query in DuckDB; totals and share are derived from the segment rows, so segments always add up to the totals. Empty portfolio gives zeros, not a division error.
+  - `order` is a closed `Literal["id", "value"]` mapped to fixed SQL fragments (no user text reaches the SQL); invalid value gives 422. `value` sorts by contract value descending with `customer_id` as tie-break, so the "call first" list is a true top-N over all customers.
+  - Dashboard: KPIs and chart come from the summary; the segment selector recomputes KPIs from the segment rows. `metrics.py` was rewritten around the summary (the old pandas aggregation over a row sample was removed).
+  - Scope change versus the proposal: no `?segment=` parameter on the endpoint, because the per-segment breakdown already contains it and the dashboard filters client-side.
+- **Files:** `services/api/{schemas,repository,main}.py`, `services/dashboard/{client,metrics,app}.py`, `tests/test_api.py` (+5), `tests/test_dashboard_client.py` (+2), `tests/test_dashboard_metrics.py` (rewritten, 5), `README.md` (API table, dashboard, roadmap).
+- **TDD evidence:**
+  - RED: 7 tests failed for the intended reasons (404 on the new route, 422 expected for `order`, missing client methods); the metrics test file failed at collection.
+  - A first version of the ordering test passed without any implementation: the test warehouse has a single at-risk customer, so the list was trivially sorted. The test was rewritten to use all customers and now asserts that id order and value order differ (so it can tell them apart); it failed RED afterwards.
+  - GREEN: `uv run pytest` -> `94 passed`; `make lint` clean.
+  - Live check, real warehouse: `/portfolio/summary` -> 5000 customers, 961 at risk (19.2%), revenue at risk 40,239,553; the dashboard script run via `streamlit.testing.AppTest` shows Customers 5,000, no exceptions, no sampling caption.
+- **What the tests guarantee:** the summary equals an independent SQL count per segment and in total, segments add up to the total, share = at_risk / customers, empty warehouse gives zeros, `order=value` returns the true top 10 across the portfolio, invalid `order` gives 422, the client parses the summary and honours `order`, KPIs for a segment selection count only that selection.
+- **Known gap:** the page layout was not checked in a browser; the detail section still issues API calls on every rerun (no caching); revenue-at-risk uses annual contract value of at-risk customers (a business definition, not a forecast).

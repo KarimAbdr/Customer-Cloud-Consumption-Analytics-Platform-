@@ -32,3 +32,18 @@ class PredictRequest(BaseModel):
 class ChurnPredictionOut(BaseModel):
     customer_id: str
     churn_probability: float
+
+
+class SegmentSummaryOut(BaseModel):
+    segment: Segment
+    customers: int
+    at_risk: int
+    annual_revenue_at_risk: float
+
+
+class PortfolioSummaryOut(BaseModel):
+    customers: int
+    at_risk: int
+    at_risk_share: float
+    annual_revenue_at_risk: float
+    segments: list[SegmentSummaryOut]

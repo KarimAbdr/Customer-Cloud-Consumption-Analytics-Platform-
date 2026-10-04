@@ -10,11 +10,12 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request
 
 from ml.inference.registry import load_latest_model
 from services.api.predictor import ChurnPredictor
-from services.api.repository import CustomerRepository
+from services.api.repository import CustomerOrder, CustomerRepository
 from services.api.schemas import (
     ChurnPredictionOut,
     CustomerOut,
     HealthOut,
+    PortfolioSummaryOut,
     PredictRequest,
     Segment,
 )
@@ -70,8 +71,13 @@ def create_app(
         segment: Segment | None = None,
         at_risk: bool | None = None,
         limit: Annotated[int, Query(ge=1, le=1000)] = 50,
+        order: CustomerOrder = "id",
     ) -> list[dict[str, object]]:
-        return repository.list_customers(segment, at_risk, limit)
+        return repository.list_customers(segment, at_risk, limit, order)
+
+    @app.get("/portfolio/summary", response_model=PortfolioSummaryOut)
+    def portfolio_summary(repository: Repository) -> dict[str, object]:
+        return repository.portfolio_summary()
 
     @app.get("/customers/{customer_id}", response_model=CustomerOut)
     def get_customer(customer_id: str, repository: Repository) -> dict[str, object]:

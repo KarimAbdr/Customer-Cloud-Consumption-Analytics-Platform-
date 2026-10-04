@@ -4,7 +4,14 @@ import os
 
 import httpx
 
-from services.api.schemas import ChurnPredictionOut, CustomerOut, HealthOut, Segment
+from services.api.repository import CustomerOrder
+from services.api.schemas import (
+    ChurnPredictionOut,
+    CustomerOut,
+    HealthOut,
+    PortfolioSummaryOut,
+    Segment,
+)
 
 DEFAULT_API_URL = "http://localhost:8010"
 
@@ -38,9 +45,13 @@ class ApiClient:
         return HealthOut.model_validate(self._get("/health").json())
 
     def customers(
-        self, segment: Segment | None = None, at_risk: bool | None = None, limit: int = 50
+        self,
+        segment: Segment | None = None,
+        at_risk: bool | None = None,
+        limit: int = 50,
+        order: CustomerOrder = "id",
     ) -> list[CustomerOut]:
-        params: dict[str, object] = {"limit": limit}
+        params: dict[str, object] = {"limit": limit, "order": order}
         if segment is not None:
             params["segment"] = segment
         if at_risk is not None:
@@ -49,6 +60,12 @@ class ApiClient:
         if response.status_code != 200:
             raise ApiUnavailableError(f"API error {response.status_code}")
         return [CustomerOut.model_validate(item) for item in response.json()]
+
+    def summary(self) -> PortfolioSummaryOut:
+        response = self._get("/portfolio/summary")
+        if response.status_code != 200:
+            raise ApiUnavailableError(f"API error {response.status_code}")
+        return PortfolioSummaryOut.model_validate(response.json())
 
     def customer(self, customer_id: str) -> CustomerOut | None:
         response = self._get(f"/customers/{customer_id}")

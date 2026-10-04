@@ -43,6 +43,17 @@ def test_predict_is_none_when_model_is_not_loaded(client: ApiClient) -> None:
     assert client.predict(known.customer_id) is None
 
 
+def test_summary_is_parsed_and_covers_the_whole_portfolio(client: ApiClient) -> None:
+    summary = client.summary()
+    assert summary.customers == 300
+    assert sum(s.customers for s in summary.segments) == 300
+
+
+def test_customers_can_be_ordered_by_value(client: ApiClient) -> None:
+    values = [c.annual_contract_value for c in client.customers(order="value", limit=30)]
+    assert values == sorted(values, reverse=True)
+
+
 def test_health_reports_model_state(client: ApiClient) -> None:
     assert client.health().model_loaded is False
 
