@@ -303,7 +303,7 @@ project quickly. Each entry: what was done, why, files, commands, verification.
 
 ---
 
-## Stage 13 - Public demo bundle for Hugging Face Spaces
+## Stage 13 - Public demo bundle for Hugging Face Spaces (superseded by Stage 13b)
 
 - **Status:** approved
 - **What:** `make space-bundle` generates `dist/space`, a folder that is pushed to a free Docker Space (dashboard public, API private inside the same container). README restructured: "Run it yourself" plus a "Publish a free live demo" section.
@@ -322,3 +322,24 @@ project quickly. Each entry: what was done, why, files, commands, verification.
   - Local end-to-end check of the bundle: `docker build dist/space` (image 1.63 GB; the build ran `make pipeline`: dbt 35/35, ROC-AUC 0.787), `docker run -p 7860:7860` with only that port published: `/_stcore/health` -> `ok`, the API port is not reachable from the host, process uid 1000, dashboard script executed inside the container showed Customers 5,000 / At risk 961 / churn probability 42.7% and the API log shows the dashboard's calls answered with 200. The test container and the image were removed afterwards.
 - **What the tests guarantee:** the bundle has the root files a Docker Space needs, the application code, and none of the local state or dev files; the Space README declares `sdk: docker` and `app_port: 7860` and differs from the GitHub README; the Dockerfile runs `make pipeline`, exposes 7860, runs as non-root and starts `start.sh`; the start script runs the API privately before the public dashboard and waits for `/health`; rebuilding replaces stale files, keeps `.git` and refuses to overwrite a foreign directory.
 - **Not verified:** the real deployment on Hugging Face (account, build there, free-tier limits and sleep behaviour were not tested; the app may need about a minute to wake up). The README intentionally has no live link yet: it is added after the owner publishes the Space.
+
+---
+
+## Stage 13b - Public demo on Render (replaces the Hugging Face bundle)
+
+- **Status:** approved
+- **What:** `render.yaml` (Render Blueprint: one free Docker web service), `deploy/render/Dockerfile` and `deploy/render/start.sh`. README: "Deploy a free live demo (Render)". The Hugging Face bundle code from Stage 13 was removed (`deploy/space/`, `deploy/space_bundle.py`, its 22 tests, `make space-bundle`); it stays in Git history (commit `d725ea0`).
+- **Why:** Stage 13 assumed a free Docker Space. Hugging Face's own documentation says Docker Spaces require a paid plan (PRO) to create; only Static Spaces are free. The assumption was made from memory without checking and was wrong. Render offers a free web service (512 MB RAM, 750 hours a month, spins down after 15 minutes of inactivity; per Render's documentation and articles, no payment method required - not tested by us).
+- **Incident that shaped the design:** the owner's first Render deploy built the root `Dockerfile` (made for Compose: no `CMD`, no data, no model). The build succeeded and the log ended with `Application exited early`: Render runs the Dockerfile's `CMD`, the base image's default command exits at once. Fix: a separate demo Dockerfile with `CMD`, built data/model and a start script; the Blueprint points at it; a regression test asserts the `CMD` is present.
+- **Design:**
+  - Single container, one public port: `start.sh` starts the API on `127.0.0.1:8010`, waits for `/health` (60 s limit), then runs Streamlit on `0.0.0.0:$PORT` (Render provides `PORT`, default 10000). `API_URL` points at the private API.
+  - `make pipeline` runs at image build (synthetic data, about 12 s locally), so start-up is fast and every deploy shows identical numbers.
+  - Build context is the repository root, no second repository. `.dockerignore` no longer excludes `deploy`; tests check that every `COPY` source exists and is not dockerignored.
+  - `render.yaml`: `type: web`, `runtime: docker`, `plan: free`, `dockerfilePath: ./deploy/render/Dockerfile`, `dockerContext: .`, `healthCheckPath: /_stcore/health`, `autoDeployTrigger: commit`.
+- **Files:** `render.yaml`, `deploy/render/{Dockerfile,start.sh}`, `tests/test_render_deploy.py` (16 tests), `README.md`, `Makefile`, `pyproject.toml`, `.dockerignore`, `.gitignore`.
+- **TDD evidence:**
+  - RED: `FileNotFoundError: render.yaml` (and no `deploy/render`).
+  - GREEN: `tests/test_render_deploy.py` -> 16 passed; `make test` -> `130 passed`; `make lint` clean.
+  - Local check, run like Render runs it (`docker build -f deploy/render/Dockerfile .`, `docker run -e PORT=10000 -p 10000:10000`): `/_stcore/health` -> `ok`, the API port is not reachable from the host, process uid 1000, dashboard script executed in the container showed Customers 5,000 / At risk 961 / churn probability 42.7%, 0 errors in the container log, memory 282 MiB. Test container and image removed afterwards.
+- **What the tests guarantee:** the Blueprint declares exactly one free Docker web service with the demo Dockerfile, health check path and auto-deploy; the Dockerfile has a `CMD`, builds data and model, runs as non-root and installs `libgomp1`; every `COPY` source exists in the build context and is not dockerignored; the start script binds `$PORT`, keeps the API private and starts it first, waits for `/health` and is executable; the README documents the Render deployment.
+- **Not verified:** the deployment on Render itself. Unknowns: whether the 512 MB free instance has enough memory and time for the image build (`make pipeline` runs during the build), whether Render accepts the Blueprint exactly as written (a summary of the Blueprint spec marked `buildCommand` as required for Docker, which we believe is wrong; the file omits it), and cold-start time after a spin-down (expected about a minute).

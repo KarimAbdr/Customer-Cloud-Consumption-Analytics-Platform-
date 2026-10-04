@@ -1,6 +1,9 @@
 #!/bin/sh
-# One public port (7860, the dashboard). The API stays private on localhost inside the container.
+# One public port (Render sets $PORT, default 10000): the dashboard.
+# The API stays private on localhost inside the container.
 set -eu
+
+PORT="${PORT:-10000}"
 
 uvicorn services.api.main:create_app --factory --host 127.0.0.1 --port 8010 &
 
@@ -16,6 +19,5 @@ done
 
 export API_URL=http://127.0.0.1:8010
 exec streamlit run services/dashboard/app.py \
-    --server.address 0.0.0.0 --server.port 7860 --server.headless true \
-    --server.enableCORS false --server.enableXsrfProtection false \
+    --server.address 0.0.0.0 --server.port "$PORT" --server.headless true \
     --browser.gatherUsageStats false

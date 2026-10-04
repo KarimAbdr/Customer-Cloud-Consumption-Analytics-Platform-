@@ -45,7 +45,7 @@ select = ["E", "F", "I", "UP", "B", "SIM", "N"]
 [tool.mypy]
 python_version = "3.12"
 strict = true
-files = ["data_platform", "deploy", "ml", "services", "tests"]
+files = ["data_platform", "ml", "services", "tests"]
 
 [[tool.mypy.overrides]]
 module = ["sklearn.*", "lightgbm.*", "mlflow.*"]

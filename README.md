@@ -74,23 +74,18 @@ curl -X POST localhost:8010/predict/churn -H 'content-type: application/json' \
      -d '{"customer_id": "C000000"}'
 ```
 
-### Publish a free live demo (Hugging Face Spaces)
+### Deploy a free live demo (Render)
 
-The dashboard and the API run in one container on a free Docker Space: the warehouse and the
-model are built into the image (the data is synthetic), the API stays private inside the
-container and only the dashboard is public.
+`render.yaml` describes one free Docker web service. `deploy/render/Dockerfile` builds a
+single container: the warehouse and the model are baked into the image (the data is synthetic),
+the API stays private inside the container and only the dashboard is public.
 
-```bash
-make space-bundle                      # writes dist/space (Dockerfile, Space README, app code)
-cd dist/space
-git init && git add . && git commit -m "Deploy"
-git remote add space https://huggingface.co/spaces/<user>/<space-name>
-git push --force space HEAD:main       # --force only for the very first push
-```
+1. On render.com: **New > Blueprint**, connect this repository (GitHub access can be limited to
+   this one repo), **Deploy Blueprint**.
+2. Every push to the connected branch redeploys automatically.
 
-Create the Space first (huggingface.co/new-space, SDK: Docker, blank template, public). The
-build takes a few minutes; the app is then served at `https://<user>-<space-name>.hf.space`.
-Re-running `make space-bundle` keeps the `.git` folder, so updates are `git commit` + `git push`.
+The free plan spins the service down after 15 minutes without traffic, so the first request after
+a pause takes about a minute while the container wakes up.
 
 ## API
 
@@ -152,7 +147,8 @@ dbt/             dbt-duckdb project: sources, silver and gold models, data tests
 ml/              training and model loading (MLflow)
 services/api/    FastAPI service
 services/dashboard/  Streamlit dashboard (API client, metrics, page)
-deploy/          builds the Hugging Face Space bundle (`make space-bundle`)
+deploy/render/   Dockerfile and start script of the single-container public demo
+render.yaml      Render Blueprint (free web service)
 dags/            Airflow DAG (thin wrapper over the make targets)
 Dockerfile, docker-compose.yml   one image, three roles (pipeline, api, dashboard)
 tests/           pytest suite

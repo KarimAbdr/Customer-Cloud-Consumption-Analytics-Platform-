@@ -1,3 +1,6 @@
+# Single-container public demo for Render (build context: the repository root).
+# The Compose image (./Dockerfile) has no CMD and no data; this one builds the data and the model
+# and serves the dashboard.
 FROM python:3.12-slim
 
 # libgomp1: OpenMP runtime required by LightGBM; make: `make pipeline` stays the single
@@ -8,7 +11,6 @@ RUN apt-get update \
 
 COPY --from=ghcr.io/astral-sh/uv:0.9 /uv /usr/local/bin/uv
 
-# Hugging Face Spaces runs containers as uid 1000.
 RUN useradd --create-home --uid 1000 app
 WORKDIR /app
 
@@ -20,7 +22,8 @@ ENV UV_NO_SYNC=1 \
 COPY pyproject.toml uv.lock ./
 RUN uv sync --locked --no-dev --no-cache
 
-COPY Makefile start.sh ./
+COPY Makefile ./
+COPY deploy/render/start.sh ./
 COPY data_platform ./data_platform
 COPY dbt ./dbt
 COPY ml ./ml
@@ -33,5 +36,5 @@ USER app
 # and every deployment serves identical numbers.
 RUN make pipeline
 
-EXPOSE 7860
+EXPOSE 10000
 CMD ["./start.sh"]
