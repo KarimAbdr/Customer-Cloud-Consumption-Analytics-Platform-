@@ -6,11 +6,14 @@ requires-python = ">=3.12,<3.13"
 dependencies = [
     "dbt-duckdb>=1.11.0",
     "duckdb>=1.5.6",
+    "lightgbm>=4.7.0",
+    "mlflow>=3.16.1",
     "numpy>=2.5.3",
     "pandas>=3.0.6",
     "pandera>=0.33.1",
     "pyarrow>=25.0.1",
     "pydantic>=2.13.5",
+    "scikit-learn>=1.9.1",
 ]
 
 [dependency-groups]
@@ -34,6 +37,10 @@ select = ["E", "F", "I", "UP", "B", "SIM", "N"]
 python_version = "3.12"
 strict = true
 files = ["data_platform", "ml", "services", "tests"]
+
+[[tool.mypy.overrides]]
+module = ["sklearn.*", "lightgbm.*", "mlflow.*"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

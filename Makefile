@@ -1,4 +1,4 @@
-.PHONY: install lint format test ingest dbt pipeline
+.PHONY: install lint format test ingest dbt train pipeline
 
 install:
 	uv sync
@@ -22,4 +22,7 @@ ingest:
 dbt:
 	uv run dbt build --project-dir dbt --profiles-dir dbt
 
-pipeline: ingest dbt
+train:
+	uv run python -m ml.training.train
+
+pipeline: ingest dbt train

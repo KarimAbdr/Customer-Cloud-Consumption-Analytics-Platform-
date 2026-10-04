@@ -139,3 +139,30 @@ project quickly. Each entry: what was done, why, files, commands, verification.
 - **What the tests guarantee:** exact column contracts for both tables, one row per customer, no NULL numeric features, feature values equal an independent pandas computation for 5 customers, churn rate equals silver, `is_at_risk` is exactly `trend < 0.85`, plus dbt tests (unique, not_null, relationships, accepted_values).
 - **Verify:** `make pipeline`; `make test` -> 48 passed.
 - **Known gap:** 0.85 risk threshold is a heuristic, not model output; the ML stage will provide real churn probabilities. Features are computed once over the whole window (no train/test time split yet).
+
+---
+
+## Stage 6 - Churn model: LightGBM + MLflow
+
+- **Status:** approved
+- **What:** `ml/training/train.py` reads `customer_features` from DuckDB, trains a LightGBM classifier, evaluates it on a stratified hold-out and logs params, metrics and the model to MLflow. `make train` runs it; `make pipeline` is now ingest -> dbt -> train.
+- **Why:** This is the ML core of the platform. Experiment tracking makes every model version reproducible (data size, params, metrics, artifact).
+- **Design:**
+  - `train_model(features, seed)` is a pure function (no DB, no MLflow), so it is unit-testable. DB loading (`load_features`) and logging (`train_and_log`) are separate.
+  - Metrics: ROC-AUC and PR-AUC. Churn is about 12%, so accuracy would mislead and PR-AUC shows quality on the minority class.
+  - Stratified 75/25 split with fixed seed; class imbalance handled with `scale_pos_weight`; `deterministic=True`, `n_jobs=1` for reproducible results.
+  - `customer_id` and the target are excluded from features.
+  - `ChurnModel` bundles the estimator with the category levels from training, so serving encodes `segment` / `industry` identically; unseen levels become missing values instead of raising.
+  - MLflow 3 notes: the plain file store is disabled by default, so tracking uses SQLite (`mlruns/mlflow.db`) with artifacts in `mlruns/artifacts`. The model is saved with `serialization_format="cloudpickle"` because the default skops format rejects the wrapper type; only load models from a store you control.
+- **Files:**
+  - `ml/training/train.py` (new). `tests/test_churn_training.py` (new, 7 tests).
+  - `Makefile` (`train` target, `pipeline` extended), `pyproject.toml` (deps `lightgbm`, `scikit-learn`, `mlflow`; mypy overrides for untyped ML libs), `uv.lock`.
+- **Environment note:** LightGBM on macOS needs OpenMP: `brew install libomp`. On macOS 14 Homebrew builds it from source (about 6 minutes).
+- **TDD evidence:**
+  - RED: `ModuleNotFoundError: No module named 'ml.training.train'`.
+  - First GREEN attempts: 5 of 7 passed. Two failures came from MLflow 3 (file store disabled; skops untrusted types). Fixed in implementation and in the tracking API (`tracking_dir` instead of a raw URI); test assertions were not weakened.
+  - GREEN: `uv run pytest` -> `55 passed`; `make lint` clean; the pandas category warning was fixed rather than silenced.
+  - Full run (`make pipeline`, 5000 customers): ROC-AUC 0.787, PR-AUC 0.344 (churn base rate about 11.7%).
+- **What the tests guarantee:** no id/target in features, same seed gives identical predictions, hold-out ROC-AUC between 0.70 and 0.95 (above chance, and not suspiciously perfect, which would indicate leakage), probabilities in [0, 1], unseen categories do not break prediction, MLflow run contains `roc_auc`, `pr_auc` and the seed, and a model reloaded from MLflow predicts identically.
+- **Verify:** `make train` prints `run_id`, `roc_auc`, `pr_auc`; `make test` -> 55 passed.
+- **Known gap:** no hyper-parameter search and no time-based split (data is a single synthetic window); metrics come from one seed; no model registry or promotion step yet.
