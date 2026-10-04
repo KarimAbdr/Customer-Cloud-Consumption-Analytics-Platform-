@@ -10,6 +10,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request
 
 from ml.inference.registry import load_latest_model
 from services.api.predictor import ChurnPredictor
+from services.api.priority import build_priority
 from services.api.repository import CustomerOrder, CustomerRepository
 from services.api.schemas import (
     ChurnPredictionOut,
@@ -17,6 +18,7 @@ from services.api.schemas import (
     HealthOut,
     PortfolioSummaryOut,
     PredictRequest,
+    PriorityListOut,
     Segment,
 )
 
@@ -78,6 +80,19 @@ def create_app(
     @app.get("/portfolio/summary", response_model=PortfolioSummaryOut)
     def portfolio_summary(repository: Repository) -> dict[str, object]:
         return repository.portfolio_summary()
+
+    @app.get("/portfolio/priority", response_model=PriorityListOut)
+    def portfolio_priority(
+        repository: Repository,
+        predictor: Predictor,
+        segment: Annotated[list[Segment] | None, Query()] = None,
+        limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    ) -> PriorityListOut:
+        """Customers to call first: ranked by churn probability x annual contract value."""
+        if predictor is None:
+            raise HTTPException(503, "Churn model is not loaded")
+        active = repository.active_customers(segment)
+        return build_priority(active, predictor.predict_many(active), limit)
 
     @app.get("/customers/{customer_id}", response_model=CustomerOut)
     def get_customer(customer_id: str, repository: Repository) -> dict[str, object]:

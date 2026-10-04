@@ -2,6 +2,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import duckdb
+import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
 
@@ -218,3 +219,100 @@ def test_list_can_be_ordered_by_contract_value_across_the_whole_portfolio(
 
 def test_invalid_order_returns_422(client: TestClient) -> None:
     assert client.get("/customers", params={"order": "random"}).status_code == 422
+
+
+def _active_customers(env: tuple[Path, Path]) -> pd.DataFrame:
+    features = load_features(env[0])
+    return features[~features["is_churned"].astype(bool)].reset_index(drop=True)
+
+
+def test_priority_is_sorted_by_expected_loss(client: TestClient) -> None:
+    body = client.get("/portfolio/priority", params={"limit": 25}).json()
+    losses = [c["expected_loss"] for c in body["items"]]
+    assert len(losses) == 25
+    assert losses == sorted(losses, reverse=True)
+
+
+def test_priority_expected_loss_is_probability_times_contract(client: TestClient) -> None:
+    for item in client.get("/portfolio/priority").json()["items"]:
+        assert item["expected_loss"] == pytest.approx(
+            item["churn_probability"] * item["annual_contract_value"]
+        )
+
+
+def test_priority_probability_matches_the_single_customer_prediction(
+    client: TestClient,
+) -> None:
+    for item in client.get("/portfolio/priority", params={"limit": 3}).json()["items"]:
+        single = client.post("/predict/churn", json={"customer_id": item["customer_id"]}).json()
+        assert item["churn_probability"] == pytest.approx(single["churn_probability"])
+
+
+def test_priority_never_lists_customers_that_already_churned(
+    client: TestClient, env: tuple[Path, Path]
+) -> None:
+    churned = {
+        str(r[0]) for r in query(env[0], "select customer_id from customer_360 where is_churned")
+    }
+    assert churned
+    items = client.get("/portfolio/priority", params={"limit": 100}).json()["items"]
+    assert not churned & {c["customer_id"] for c in items}
+
+
+def test_priority_totals_match_an_independent_calculation(
+    client: TestClient, env: tuple[Path, Path], model: ChurnModel
+) -> None:
+    active = _active_customers(env)
+    expected = float((predict_proba(model, active) * active["monthly_fee"] * 12).sum())
+    body = client.get("/portfolio/priority").json()
+    assert body["customers_scored"] == len(active)
+    assert body["total_expected_loss"] == pytest.approx(expected)
+
+
+def test_priority_filters_by_segment_on_the_server(client: TestClient) -> None:
+    body = client.get("/portfolio/priority", params={"segment": "SMB", "limit": 20}).json()
+    assert body["items"]
+    assert {c["segment"] for c in body["items"]} == {"SMB"}
+
+
+def test_priority_without_the_dominant_segment_is_not_empty(client: TestClient) -> None:
+    """Regression: the dashboard filtered a global top-20 in the browser, so dropping the
+    segment that owns the biggest contracts left an empty table."""
+    params = {"segment": ["SMB", "MID_MARKET"], "limit": 20}
+    items = client.get("/portfolio/priority", params=params).json()["items"]
+    assert len(items) == 20
+    assert {c["segment"] for c in items} <= {"SMB", "MID_MARKET"}
+
+
+def test_priority_total_follows_the_segment_filter(client: TestClient) -> None:
+    everything = client.get("/portfolio/priority").json()
+    smb = client.get("/portfolio/priority", params={"segment": "SMB"}).json()
+    assert smb["customers_scored"] < everything["customers_scored"]
+    assert smb["total_expected_loss"] < everything["total_expected_loss"]
+
+
+def test_priority_items_have_exactly_the_contract_fields(client: TestClient) -> None:
+    item = client.get("/portfolio/priority", params={"limit": 1}).json()["items"][0]
+    assert set(item) == {
+        "customer_id",
+        "segment",
+        "industry",
+        "employees",
+        "annual_contract_value",
+        "churn_probability",
+        "expected_loss",
+        "usage_trend_ratio",
+        "total_tickets",
+        "signals",
+    }
+
+
+@pytest.mark.parametrize("params", [{"segment": "NOPE"}, {"limit": 0}, {"limit": 101}])
+def test_priority_invalid_parameters_return_422(
+    client: TestClient, params: dict[str, object]
+) -> None:
+    assert client.get("/portfolio/priority", params=params).status_code == 422
+
+
+def test_priority_without_a_model_returns_503(client_without_model: TestClient) -> None:
+    assert client_without_model.get("/portfolio/priority").status_code == 503

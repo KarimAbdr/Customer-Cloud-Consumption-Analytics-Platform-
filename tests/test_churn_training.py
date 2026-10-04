@@ -111,3 +111,18 @@ def test_model_trained_via_cli_loads_in_a_different_process(tmp_path: Path) -> N
     assert train.returncode == 0, train.stderr
     model = load_latest_model(tracking_dir, "cli")
     assert len(predict_proba(model, load_features(db_path).head(2))) == 2
+
+
+def test_predicted_probabilities_are_calibrated_to_the_base_rate(features: pd.DataFrame) -> None:
+    """The dashboard sums probability x contract value into money, so a probability of 0.4 must
+    mean roughly 40% of such customers churn. Class reweighting inflated scores about 2.5x."""
+    result = train_model(features, seed=SEED)
+    base_rate = float(features["is_churned"].astype(int).mean())
+    mean_probability = float(predict_proba(result.model, features).mean())
+    assert abs(mean_probability - base_rate) < 0.04
+
+
+def test_brier_score_beats_always_predicting_the_base_rate(features: pd.DataFrame) -> None:
+    result = train_model(features, seed=SEED)
+    base_rate = float(features["is_churned"].astype(int).mean())
+    assert result.metrics["brier"] < base_rate * (1 - base_rate)

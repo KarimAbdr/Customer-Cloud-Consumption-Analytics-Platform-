@@ -92,3 +92,24 @@ def test_predict_returns_probability_from_response() -> None:
 def test_default_client_points_at_env_url(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("API_URL", "http://example.test:1234")
     assert str(ApiClient.from_env()._http.base_url).startswith("http://example.test:1234")
+
+
+def test_priority_sends_every_selected_segment_and_parses_the_answer() -> None:
+    seen: list[httpx.URL] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url)
+        return httpx.Response(
+            200, json={"customers_scored": 0, "total_expected_loss": 0, "items": []}
+        )
+
+    api = ApiClient(httpx.Client(base_url="http://x", transport=httpx.MockTransport(respond)))
+    result = api.priority(["SMB", "MID_MARKET"], limit=7)
+    assert result is not None
+    assert result.items == []
+    assert seen[0].params.get_list("segment") == ["SMB", "MID_MARKET"]
+    assert seen[0].params["limit"] == "7"
+
+
+def test_priority_is_none_when_the_model_is_not_loaded(client: ApiClient) -> None:
+    assert client.priority(None) is None

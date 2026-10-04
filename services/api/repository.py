@@ -1,5 +1,6 @@
 """Read-only access to the gold layer in DuckDB."""
 
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Literal
 
@@ -79,4 +80,16 @@ class CustomerRepository:
         with duckdb.connect(self._db_path, read_only=True) as con:
             return con.execute(
                 "select * from customer_features where customer_id = ?", [customer_id]
+            ).df()
+
+    def active_customers(self, segments: Sequence[str] | None) -> pd.DataFrame:
+        """Feature rows of customers that have not churned yet, optionally within segments."""
+        where = "not cast(is_churned as boolean)"
+        params: list[Any] = []
+        if segments:
+            where += f" and segment in ({', '.join('?' for _ in segments)})"
+            params = list(segments)
+        with duckdb.connect(self._db_path, read_only=True) as con:
+            return con.execute(
+                f"select * from customer_features where {where} order by customer_id", params
             ).df()

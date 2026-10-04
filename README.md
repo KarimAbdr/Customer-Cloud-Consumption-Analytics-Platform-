@@ -36,7 +36,7 @@ synthetic generators
 | Gold | dbt-duckdb | `customer_features` (ML input) and `customer_360` (business view) |
 | ML | LightGBM, MLflow | Churn model, metrics and artifacts tracked per run |
 | Serving | FastAPI, Pydantic | Customer lookup/filtering, portfolio summary and churn prediction |
-| Dashboard | Streamlit | Thin client over the API: KPIs, segments, "call first" list, churn score |
+| Dashboard | Streamlit | Thin client over the API: KPIs, ranked "who to call first" table with reasons, customer card, segment charts |
 
 ## Run it yourself
 
@@ -95,20 +95,25 @@ a pause takes about a minute while the container wakes up.
 | `GET /customers/{id}` | Customer 360 profile (404 if unknown) |
 | `GET /customers?segment=&at_risk=&order=&limit=` | Filtered list; `order=value` sorts by contract value |
 | `GET /portfolio/summary` | Portfolio KPIs and per-segment breakdown, aggregated in SQL over all customers |
+| `GET /portfolio/priority?segment=&limit=` | Who to call first: active customers ranked by expected loss (churn probability x annual contract value) with plain-language signals |
 | `POST /predict/churn` | Churn probability for a customer (503 if no model) |
 
 ## Model
 
-LightGBM binary classifier, 5,000 customers, about 12% churn rate. One seeded run:
+LightGBM binary classifier, 5,000 customers, about 12% churn rate. One seeded run (hold-out):
 
-| Metric | Value |
-|--------|-------|
-| ROC-AUC | 0.787 |
-| PR-AUC | 0.344 |
+| Metric | Value | Meaning |
+|--------|-------|---------|
+| ROC-AUC | 0.796 | How well customers are ranked (0.5 = chance) |
+| PR-AUC | 0.339 | Ranking quality on the churn minority class (base rate 0.117) |
+| Brier score | 0.090 | Accuracy of the probabilities themselves (always predicting the base rate gives 0.103) |
 
-PR-AUC is reported next to ROC-AUC because the classes are imbalanced. A test asserts the
-hold-out ROC-AUC stays between 0.70 and 0.95, so a leaked feature (suspiciously perfect
-score) fails the build. Features are read from the same gold table in training and serving
+The dashboard multiplies the probability by the contract value to get an expected loss, so the
+probabilities must be calibrated, not just well ranked. Class reweighting made ranking look the
+same but inflated probabilities about 2.5x (mean 30% against 12% real churn); it was removed, and
+tests assert that the mean predicted probability stays close to the real churn rate. Another test
+checks that the hold-out ROC-AUC stays between 0.70 and 0.95, so a leaked feature (suspiciously
+perfect score) fails the build. Features are read from the same gold table in training and serving
 to avoid training-serving skew.
 
 ## Quality gates

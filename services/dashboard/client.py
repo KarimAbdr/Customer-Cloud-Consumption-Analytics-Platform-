@@ -1,6 +1,7 @@
 """Thin HTTP client for the Customer 360 API. The dashboard talks to nothing else."""
 
 import os
+from collections.abc import Sequence
 
 import httpx
 
@@ -10,6 +11,7 @@ from services.api.schemas import (
     CustomerOut,
     HealthOut,
     PortfolioSummaryOut,
+    PriorityListOut,
     Segment,
 )
 
@@ -66,6 +68,22 @@ class ApiClient:
         if response.status_code != 200:
             raise ApiUnavailableError(f"API error {response.status_code}")
         return PortfolioSummaryOut.model_validate(response.json())
+
+    def priority(
+        self, segments: Sequence[Segment] | None, limit: int = 20
+    ) -> PriorityListOut | None:
+        """Customers ranked by expected loss; None when the churn model is not loaded."""
+        params: list[tuple[str, str | int | float | bool | None]] = [("limit", limit)]
+        params += [("segment", name) for name in segments or []]
+        try:
+            response = self._http.get("/portfolio/priority", params=params)
+        except httpx.TransportError as error:
+            raise ApiUnavailableError(f"API unreachable: {error}") from error
+        if response.status_code == 503:
+            return None
+        if response.status_code != 200:
+            raise ApiUnavailableError(f"API error {response.status_code}")
+        return PriorityListOut.model_validate(response.json())
 
     def customer(self, customer_id: str) -> CustomerOut | None:
         response = self._get(f"/customers/{customer_id}")

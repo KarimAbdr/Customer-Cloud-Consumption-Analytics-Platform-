@@ -16,7 +16,7 @@ import mlflow.sklearn
 import numpy as np
 import pandas as pd
 from lightgbm import LGBMClassifier
-from sklearn.metrics import average_precision_score, roc_auc_score
+from sklearn.metrics import average_precision_score, brier_score_loss, roc_auc_score
 from sklearn.model_selection import train_test_split
 
 from ml.training.model import ChurnModel
@@ -70,8 +70,8 @@ def train_model(
             "learning_rate": 0.05,
             "num_leaves": 15,
             "min_child_samples": 20,
-            # Churn is the minority class; reweight instead of resampling.
-            "scale_pos_weight": float((y_train == 0).sum() / max(1, (y_train == 1).sum())),
+            # No class reweighting: it inflated probabilities about 2.5x (mean 30% vs 12% real
+            # churn) without improving ranking, and the dashboard turns them into money.
             "random_state": seed,
             "deterministic": True,
             "force_row_wise": True,
@@ -86,6 +86,8 @@ def train_model(
     metrics = {
         "roc_auc": float(roc_auc_score(y_test, probabilities)),
         "pr_auc": float(average_precision_score(y_test, probabilities)),
+        # Calibration: mean squared error of the probabilities (lower is better).
+        "brier": float(brier_score_loss(y_test, probabilities)),
     }
     return TrainResult(ChurnModel(estimator, feature_names, categories), metrics)
 
@@ -148,7 +150,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     metrics = mlflow.get_run(run_id).data.metrics
     print(f"run_id: {run_id}")
-    for name in ("roc_auc", "pr_auc"):
+    for name in ("roc_auc", "pr_auc", "brier"):
         print(f"{name}: {metrics[name]:.3f}")
     return 0
 

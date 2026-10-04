@@ -47,3 +47,22 @@ class PortfolioSummaryOut(BaseModel):
     at_risk_share: float
     annual_revenue_at_risk: float
     segments: list[SegmentSummaryOut]
+
+
+class PriorityCustomerOut(BaseModel):
+    customer_id: str
+    segment: Segment
+    industry: str
+    employees: int
+    annual_contract_value: float
+    churn_probability: float
+    expected_loss: float
+    usage_trend_ratio: float
+    total_tickets: int
+    signals: list[str]
+
+
+class PriorityListOut(BaseModel):
+    customers_scored: int
+    total_expected_loss: float
+    items: list[PriorityCustomerOut]
