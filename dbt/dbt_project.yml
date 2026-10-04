@@ -1,0 +1,11 @@
+name: customer360
+version: "0.1.0"
+config-version: 2
+profile: customer360
+
+model-paths: ["models"]
+
+models:
+  customer360:
+    silver:
+      +materialized: table

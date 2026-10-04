@@ -1,0 +1,8 @@
+customer360:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      # Paths are relative to the repository root (run dbt from there).
+      path: "{{ env_var('DUCKDB_PATH', 'data/warehouse.duckdb') }}"
+      threads: 4

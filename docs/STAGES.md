@@ -89,3 +89,30 @@ project quickly. Each entry: what was done, why, files, commands, verification.
 - **What the tests guarantee:** one Parquet file per table, correct row counts, data reads back equal to what was generated, same seed gives identical output, re-run overwrites cleanly with no leftover `.tmp`, schema violation (negative usage) raises `SchemaError` and writes nothing, CLI exits 0 and prints a summary.
 - **Verify:** `make pipeline` then `ls data/bronze`; `make test` -> 33 passed.
 - **Known gap:** `check_dtype=False` in the round-trip test because Parquet may change string/datetime resolution; values are compared exactly. Support tickets cover `days // 30` months.
+
+---
+
+## Stage 4 - Silver layer: DuckDB + dbt models and tests
+
+- **Status:** approved
+- **What:** dbt-duckdb project that reads bronze Parquet as sources and builds five cleaned silver tables, with dbt data tests.
+- **Why:** Bronze is raw. Silver is the single place where data is renamed, typed and cleaned, so every later layer (gold, ML, API) starts from trusted tables. dbt gives a dependency graph, versioned SQL and tests that run on every build. Pandera guards the bronze boundary; dbt tests guard relations and business rules between layers.
+- **Design:**
+  - Sources read Parquet directly via `meta.external_location` (`BRONZE_DIR` env var, default `data/bronze`); warehouse path from `DUCKDB_PATH` (default `data/warehouse.duckdb`). Run dbt from the repo root.
+  - `stg_customers`: missing `industry` -> `'UNKNOWN'`.
+  - `stg_contracts`: columns renamed to `contract_start_date` / `contract_end_date`, cast to DATE.
+  - `stg_daily_usage`: `usage_date` cast to DATE. `stg_support_tickets`: `month` -> `ticket_month` (DATE). `stg_churn_labels`: `churned` int -> `is_churned` boolean.
+  - 19 dbt data tests (24 dbt nodes with the 5 models): unique, not_null, accepted_values (segment, term_months) and relationships to `stg_customers`.
+- **Files:**
+  - `dbt/dbt_project.yml`, `dbt/profiles.yml`, `dbt/models/sources.yml`, `dbt/models/silver/schema.yml` (new).
+  - `dbt/models/silver/stg_*.sql` (5 new models).
+  - `tests/test_dbt_silver.py` (new): runs `dbt build` on a small generated dataset in a temp dir and checks the result with DuckDB.
+  - `Makefile` (changed): new `ingest` and `dbt` targets; `pipeline` = `ingest` then `dbt`.
+  - `pyproject.toml`, `uv.lock` (changed): added `dbt-duckdb`, `duckdb`.
+- **TDD evidence:**
+  - RED: with sources and schema tests but no models, `dbt build` ran nothing, no warehouse was created, and 8 checks failed with `database does not exist`.
+  - GREEN: `uv run pytest tests/test_dbt_silver.py` -> 8 passed; full suite `41 passed`.
+  - `make pipeline` -> `Done. PASS=24 WARN=0 ERROR=0 (TOTAL=24)`; `make lint` clean.
+- **What the tests guarantee:** each silver table has exactly the expected columns in order, row counts equal bronze, no NULL `industry`, `usage_date` is DATE, and all dbt data tests (keys, categories, referential integrity) pass.
+- **Verify:** `make pipeline`; `make test` -> 41 passed.
+- **Known gap:** sqlfluff is not wired in yet (planned in the quality stage). The pytest runs the real `dbt` binary, so `make test` takes about 4 seconds longer.

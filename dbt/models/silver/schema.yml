@@ -1,0 +1,75 @@
+version: 2
+
+models:
+  - name: stg_customers
+    description: One row per customer, cleaned.
+    columns:
+      - name: customer_id
+        data_tests: [unique, not_null]
+      - name: segment
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [SMB, MID_MARKET, ENTERPRISE]
+      - name: employees
+        data_tests: [not_null]
+      - name: industry
+        description: Missing values are replaced with 'UNKNOWN'.
+        data_tests: [not_null]
+
+  - name: stg_contracts
+    description: One row per customer contract.
+    columns:
+      - name: customer_id
+        data_tests:
+          - unique
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_customers')
+                field: customer_id
+      - name: term_months
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [12, 24, 36]
+                quote: false
+
+  - name: stg_daily_usage
+    description: One row per customer per day.
+    columns:
+      - name: customer_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_customers')
+                field: customer_id
+      - name: daily_usage
+        data_tests: [not_null]
+
+  - name: stg_support_tickets
+    description: Ticket counts per customer per month.
+    columns:
+      - name: customer_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_customers')
+                field: customer_id
+
+  - name: stg_churn_labels
+    description: One churn label per customer.
+    columns:
+      - name: customer_id
+        data_tests:
+          - unique
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_customers')
+                field: customer_id
+      - name: is_churned
+        data_tests: [not_null]

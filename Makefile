@@ -1,4 +1,4 @@
-.PHONY: install lint format test pipeline
+.PHONY: install lint format test ingest dbt pipeline
 
 install:
 	uv sync
@@ -16,5 +16,10 @@ format:
 test:
 	uv run pytest
 
-pipeline:
+ingest:
 	uv run python -m data_platform.ingestion.run
+
+dbt:
+	uv run dbt build --project-dir dbt --profiles-dir dbt
+
+pipeline: ingest dbt

@@ -1,0 +1,13 @@
+version: 2
+
+sources:
+  - name: bronze
+    description: Raw Parquet files written by data_platform.ingestion.run.
+    meta:
+      external_location: "{{ env_var('BRONZE_DIR', 'data/bronze') }}/{name}.parquet"
+    tables:
+      - name: customers
+      - name: contracts
+      - name: daily_usage
+      - name: support_tickets
+      - name: churn_labels
