@@ -39,6 +39,17 @@ class SyntheticConfig:
     daily_noise_sigma: float = 0.15
     spike_probability: float = 0.003
     spike_range: tuple[float, float] = field(default=(2.0, 4.0))
+    # Latent dissatisfaction ~ N(0, 1): hidden driver of usage decline, tickets and churn.
+    dissatisfaction_trend_effect: float = 0.0015  # daily log-trend lost per unit
+    # Support tickets: Poisson monthly rate per segment, scaled by exp(effect * dissatisfaction).
+    tickets_monthly_rate: tuple[float, float, float] = (0.3, 1.0, 3.0)
+    tickets_dissatisfaction_effect: float = 0.5
+    # Churn: logistic model on latent dissatisfaction, short contracts and small customers.
+    churn_intercept: float = -3.1
+    churn_dissatisfaction_coef: float = 1.0
+    churn_short_term_coef: float = 0.4  # 12-month contracts churn more
+    churn_smb_coef: float = 0.3
+    churn_noise_sigma: float = 0.5
 
 
 DEFAULT_CONFIG = SyntheticConfig()
@@ -94,6 +105,7 @@ def generate_usage(
     days: int,
     seed: int,
     config: SyntheticConfig = DEFAULT_CONFIG,
+    dissatisfaction: np.ndarray | None = None,
 ) -> pd.DataFrame:
     rng = np.random.default_rng(seed)
     n = len(customers)
@@ -105,6 +117,8 @@ def generate_usage(
         * rng.lognormal(0.0, config.customer_level_sigma, size=n)
     )
     trend = rng.normal(config.daily_trend_mean, config.daily_trend_sigma, size=n)
+    if dissatisfaction is not None:
+        trend = trend - config.dissatisfaction_trend_effect * dissatisfaction
     growth = np.exp(np.outer(trend, np.arange(days)))
     seasonality = np.where(dates.dayofweek >= 5, config.weekend_factor, 1.0)
     noise = rng.lognormal(0.0, config.daily_noise_sigma, size=(n, days))
@@ -120,5 +134,63 @@ def generate_usage(
             "customer_id": np.repeat(customers["customer_id"].to_numpy(), days),
             "usage_date": np.tile(dates.to_numpy(), n),
             "daily_usage": np.round(usage.ravel(), 3),
+        }
+    )
+
+
+def generate_dissatisfaction(n: int, seed: int) -> np.ndarray:
+    """Hidden per-customer driver. Never store it in a table (target leakage)."""
+    return np.random.default_rng(seed).normal(0.0, 1.0, size=n)
+
+
+def generate_tickets(
+    customers: pd.DataFrame,
+    start: date,
+    months: int,
+    seed: int,
+    dissatisfaction: np.ndarray,
+    config: SyntheticConfig = DEFAULT_CONFIG,
+) -> pd.DataFrame:
+    rng = np.random.default_rng(seed)
+    n = len(customers)
+    month_starts = pd.date_range(start.replace(day=1), periods=months, freq="MS")
+    segment_idx = customers["segment"].map({s: i for i, s in enumerate(SEGMENTS)}).to_numpy()
+    rate = np.array(config.tickets_monthly_rate)[segment_idx] * np.exp(
+        config.tickets_dissatisfaction_effect * dissatisfaction
+    )
+    counts = rng.poisson(rate[:, None], size=(n, months))
+
+    return pd.DataFrame(
+        {
+            "customer_id": np.repeat(customers["customer_id"].to_numpy(), months),
+            "month": np.tile(month_starts.to_numpy(), n),
+            "ticket_count": counts.ravel().astype(int),
+        }
+    )
+
+
+def generate_churn_labels(
+    customers: pd.DataFrame,
+    contracts: pd.DataFrame,
+    dissatisfaction: np.ndarray,
+    seed: int,
+    config: SyntheticConfig = DEFAULT_CONFIG,
+) -> pd.DataFrame:
+    rng = np.random.default_rng(seed)
+    n = len(customers)
+    term = contracts.set_index("customer_id")["term_months"].reindex(customers["customer_id"])
+    logit = (
+        config.churn_intercept
+        + config.churn_dissatisfaction_coef * dissatisfaction
+        + config.churn_short_term_coef * (term.to_numpy() == config.term_months[0])
+        + config.churn_smb_coef * (customers["segment"].to_numpy() == "SMB")
+        + rng.normal(0.0, config.churn_noise_sigma, size=n)
+    )
+    churned = rng.random(n) < 1.0 / (1.0 + np.exp(-logit))
+
+    return pd.DataFrame(
+        {
+            "customer_id": customers["customer_id"].to_numpy(),
+            "churned": churned.astype(int),
         }
     )
