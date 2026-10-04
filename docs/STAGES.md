@@ -194,3 +194,23 @@ project quickly. Each entry: what was done, why, files, commands, verification.
 - **What the tests guarantee:** health with and without a model, customer payload has exactly the contract fields, 404 for unknown customer (message contains the id), segment and at-risk filters, limit respected, 422 for bad segment / limit 0 / limit 1001, prediction equals `predict_proba` of the model for the same customer, 404 unknown customer on predict, 503 without a model, 422 for a missing body field, the latest-model loader returns a usable model and fails clearly on an empty store.
 - **Verify:** `make pipeline`, then `make api` and `curl localhost:8010/health`; `make test` -> 72 passed.
 - **Known gap:** no authentication, rate limiting or request logging; no batch prediction endpoint; model is only reloaded on restart.
+
+---
+
+## Stage 8 - CI, SQL linting and README
+
+- **Status:** approved
+- **What:** sqlfluff for dbt models, a GitHub Actions workflow, a project README.
+- **Why:** Python was linted (ruff, mypy) but SQL was not. CI makes "tests exist" verifiable on every push, and the README is the first thing a reader opens.
+- **Design:**
+  - `.sqlfluff`: duckdb dialect, dbt templater (`sqlfluff-templater-dbt`), lowercase keywords/functions to match the existing models, 100-char lines.
+  - `ST06` (column order) is disabled on purpose: column order in `customer_features` is the model's feature order and `customer_360` is a consumer-facing contract; reordering to satisfy a style rule would change behaviour. `RF04` (keyword-like identifiers) is also excluded.
+  - `make lint` now runs sqlfluff; `make format` runs `sqlfluff fix`; a local pre-commit hook lints `dbt/**/*.sql`.
+  - `.github/workflows/ci.yml`: checkout, `astral-sh/setup-uv`, `uv sync --locked`, `make lint`, `make test`. Same commands as local. No data is needed from the repo: tests build their own bronze and dbt warehouse in temp directories. `concurrency` cancels superseded runs.
+- **Files:** `.sqlfluff`, `.sqlfluffignore`, `.github/workflows/ci.yml`, `README.md`, `Makefile`, `.pre-commit-config.yaml`, `pyproject.toml`, `uv.lock`.
+- **Verification evidence:**
+  - RED: `uv run sqlfluff lint dbt/models` -> 2 violations (`ST06` in `customer_360.sql` and `customer_features.sql`).
+  - GREEN: after the rule decision above, `All Finished!` with no violations.
+  - `make lint` clean; `make test` -> `72 passed`; workflow YAML parses and uses only the commands above.
+- **Not verified locally:** the GitHub Actions run itself (needs a push to GitHub). The first run on Linux may reveal environment differences.
+- **README placeholder:** the CI badge URL contains `OWNER/REPO`; replace it after creating the GitHub repository.

@@ -8,10 +8,12 @@ lint:
 	uv run ruff check .
 	uv run ruff format --check .
 	uv run mypy
+	uv run sqlfluff lint dbt/models
 
 format:
 	uv run ruff check --fix .
 	uv run ruff format .
+	uv run sqlfluff fix dbt/models
 
 test:
 	uv run pytest
