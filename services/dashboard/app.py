@@ -1,15 +1,22 @@
 """Streamlit dashboard. Run with: make dashboard (needs the API: make api)."""
 
+import altair as alt
+import pandas as pd
 import streamlit as st
 
 from services.api.schemas import PortfolioSummaryOut, PriorityCustomerOut, PriorityListOut, Segment
 from services.dashboard.client import ApiClient, ApiUnavailableError
 from services.dashboard.metrics import (
     NO_SIGNAL,
+    PRIORITY_COLUMNS,
     SEGMENT_ORDER,
+    format_money,
+    format_usage_change,
     kpis_for,
+    loss_by_segment,
     priority_table,
     segment_frame,
+    top_share,
 )
 
 TOP_N = 20
@@ -25,25 +32,35 @@ def load_priority(segments: tuple[Segment, ...]) -> PriorityListOut | None:
     return ApiClient.from_env().priority(segments, limit=TOP_N)
 
 
+def loss_chart(frame: pd.DataFrame) -> alt.LayerChart:
+    """Horizontal bars with the value printed on each bar."""
+    base = alt.Chart(frame).encode(
+        y=alt.Y("segment:N", sort=SEGMENT_ORDER, title=None, axis=alt.Axis(labelFontSize=14)),
+        x=alt.X(
+            "expected_loss:Q", title="Expected loss per year (€)", axis=alt.Axis(format=",.0f")
+        ),
+    )
+    bars = base.mark_bar(size=36)
+    labels = base.mark_text(align="left", dx=6, fontSize=14).encode(
+        text=alt.Text("expected_loss:Q", format=",.0f")
+    )
+    chart: alt.LayerChart = (bars + labels).properties(height=60 * max(len(frame), 1) + 40)
+    return chart
+
+
 def show_customer(customer: PriorityCustomerOut) -> None:
     st.subheader(f"Customer {customer.customer_id}")
-    left, right = st.columns([1, 2])
-    with left:
-        st.metric("Churn probability", f"{customer.churn_probability:.0%}")
-        st.metric("Expected loss", f"{customer.expected_loss:,.0f}")
-        st.metric("Contract / year", f"{customer.annual_contract_value:,.0f}")
-    with right:
-        st.markdown("**Why this customer is flagged**")
-        if customer.signals:
-            for signal in customer.signals:
-                st.markdown(f"- {signal}")
-        else:
-            st.markdown(f"- {NO_SIGNAL}")
-        st.caption(
-            f"{customer.segment} · {customer.industry} · {customer.employees:,} employees · "
-            f"{customer.total_tickets} support tickets · usage trend "
-            f"{customer.usage_trend_ratio:.2f}x (last 30 days vs first 30)"
-        )
+    st.metric("Chance of leaving", f"{customer.churn_probability:.0%}")
+    st.metric("Expected loss", format_money(customer.expected_loss))
+    st.metric("Annual contract", format_money(customer.annual_contract_value))
+    st.markdown("**Why this customer is flagged**")
+    for signal in customer.signals or [NO_SIGNAL]:
+        st.markdown(f"- {signal}")
+    st.caption(
+        f"{customer.segment} · {customer.industry} · {customer.employees:,} employees · "
+        f"{customer.total_tickets} support tickets · usage "
+        f"{format_usage_change(customer.usage_trend_ratio)} vs. the start of the period"
+    )
 
 
 def main() -> None:
@@ -51,7 +68,8 @@ def main() -> None:
     st.title("Customer 360: who to call first")
     st.caption(
         "Synthetic B2B SaaS customers. A model estimates each customer's probability to churn; "
-        "customers are ranked by expected loss = churn probability × annual contract value."
+        "customers are ranked by expected loss = chance of leaving × annual contract. "
+        "All amounts in euro."
     )
 
     try:
@@ -67,8 +85,7 @@ def main() -> None:
     st.sidebar.markdown(
         "**How to read this**\n\n"
         "- *Usage drop*: usage in the last 30 days is more than 15% below the first 30 days.\n"
-        "- *Expected loss*: what the model expects to lose from a customer, "
-        "not a promise.\n"
+        "- *Expected loss*: chance of leaving × annual contract, an estimate and not a promise.\n"
         "- Already churned customers are never listed."
     )
     if not selected:
@@ -83,70 +100,77 @@ def main() -> None:
         st.error(f"{error}. Start the API with `make api`.")
         return
 
-    columns = st.columns(4)
-    columns[0].metric(
-        "Customers", f"{kpis.customers:,}", help="Customers in the selected segments."
+    if priority is None:
+        st.warning(
+            "The churn model is not loaded, so customers cannot be ranked. Run `make train`."
+        )
+        headline, active_customers, coverage = "n/a", kpis.customers, "n/a"
+    else:
+        headline = format_money(priority.total_expected_loss)
+        active_customers = priority.customers_scored
+        coverage = f"{top_share(priority.items, priority.total_expected_loss):.0%}"
+
+    hero, *others = st.columns([2, 1, 1, 1])
+    hero.metric(
+        "Expected loss per year",
+        headline,
+        help=(
+            "What the model expects to lose in a year: for every active customer, "
+            "chance of leaving × annual contract. An estimate, not a promise."
+        ),
     )
-    columns[1].metric(
+    others[0].metric("Active customers", f"{active_customers:,}")
+    others[1].metric(
         "With a usage drop",
         f"{kpis.at_risk:,}",
         delta=f"{kpis.at_risk_share:.1%} of customers",
         delta_color="off",
         help="Usage in the last 30 days fell more than 15% below the first 30 days.",
     )
-    columns[2].metric(
-        "Contract value with a usage drop",
-        f"{kpis.annual_revenue_at_risk:,.0f}",
-        help="Annual contract value of the customers with a usage drop.",
+    others[2].metric(
+        f"Top {TOP_N} cover",
+        coverage,
+        help="Share of the total expected loss held by the customers in the list below.",
     )
-    if priority is None:
-        columns[3].metric("Expected loss (model)", "n/a")
-    else:
-        columns[3].metric(
-            "Expected loss (model)",
-            f"{priority.total_expected_loss:,.0f}",
-            help="Sum over all active customers of churn probability × annual contract value.",
-        )
 
     st.header("Who to call first")
-    if priority is None:
-        st.warning(
-            "The churn model is not loaded, so customers cannot be ranked. Run `make train`."
-        )
-    elif not priority.items:
+    if priority is not None and not priority.items:
         st.info("No active customers in the selected segments.")
-    else:
+    elif priority is not None:
         st.caption(
             f"Top {len(priority.items)} of {priority.customers_scored:,} active customers by "
-            "expected loss. Click a row to see why."
+            "expected loss."
         )
-        event = st.dataframe(
-            priority_table(priority.items),
-            hide_index=True,
-            width="stretch",
-            on_select="rerun",
-            selection_mode="single-row",
-            column_config={
-                "Contract / year": st.column_config.NumberColumn(format="localized"),
-                "Churn probability": st.column_config.ProgressColumn(
-                    min_value=0.0, max_value=1.0, format="percent"
-                ),
-                "Expected loss": st.column_config.NumberColumn(format="localized"),
-                "Why": st.column_config.TextColumn(width="large"),
-            },
-        )
-        rows = event.selection.rows
-        show_customer(priority.items[rows[0] if rows else 0])
+        table_col, detail_col = st.columns([2, 1])
+        with table_col:
+            event = st.dataframe(
+                priority_table(priority.items),
+                hide_index=True,
+                width="stretch",
+                on_select="rerun",
+                selection_mode="single-row",
+                column_config={
+                    PRIORITY_COLUMNS["contract"]: st.column_config.NumberColumn(format="localized"),
+                    PRIORITY_COLUMNS["probability"]: st.column_config.ProgressColumn(
+                        min_value=0.0, max_value=1.0, format="percent"
+                    ),
+                    PRIORITY_COLUMNS["loss"]: st.column_config.NumberColumn(format="localized"),
+                    PRIORITY_COLUMNS["why"]: st.column_config.TextColumn(width="large"),
+                },
+            )
+        with detail_col:
+            rows = event.selection.rows
+            if rows:
+                show_customer(priority.items[rows[0]])
+            else:
+                st.info("Click a row in the table to see why this customer is flagged.")
 
-    st.header("Segments")
-    left, right = st.columns(2)
-    chosen = segments[segments["segment"].isin(selected)]
-    with left:
-        st.markdown("**Customers with a usage drop, % of the segment**")
-        st.bar_chart(chosen, x="segment", y="at_risk_share", horizontal=True)
-    with right:
-        st.markdown("**Contract value with a usage drop**")
-        st.bar_chart(chosen, x="segment", y="annual_revenue_at_risk", horizontal=True)
+    if priority is not None:
+        st.header("Where the expected loss is")
+        st.caption(
+            "Expected loss per year by segment, all active customers (not only the top list)."
+        )
+        st.altair_chart(loss_chart(loss_by_segment(priority.by_segment, selected)))
 
 
 main()

@@ -1,7 +1,21 @@
 import pandas as pd
 
-from services.api.schemas import PortfolioSummaryOut, PriorityCustomerOut, SegmentSummaryOut
-from services.dashboard.metrics import NO_SIGNAL, kpis_for, priority_table, segment_frame
+from services.api.schemas import (
+    PortfolioSummaryOut,
+    PriorityCustomerOut,
+    SegmentLossOut,
+    SegmentSummaryOut,
+)
+from services.dashboard.metrics import (
+    NO_SIGNAL,
+    format_money,
+    format_usage_change,
+    kpis_for,
+    loss_by_segment,
+    priority_table,
+    segment_frame,
+    top_share,
+)
 
 
 def _summary() -> PortfolioSummaryOut:
@@ -80,28 +94,65 @@ def test_priority_table_uses_readable_column_names_in_a_fixed_order() -> None:
     assert list(table.columns) == [
         "Customer",
         "Segment",
-        "Industry",
-        "Contract / year",
-        "Churn probability",
-        "Expected loss",
-        "Why",
+        "Annual contract (€)",
+        "Chance of leaving",
+        "Expected loss (€)",
+        "Why it is listed",
     ]
 
 
 def test_priority_table_joins_signals_into_one_readable_cell() -> None:
     table = priority_table([_customer("C1", ["usage down 20%", "30 support tickets"])])
-    assert table.loc[0, "Why"] == "usage down 20%; 30 support tickets"
+    assert table.loc[0, "Why it is listed"] == "usage down 20%; 30 support tickets"
 
 
 def test_priority_table_says_so_when_there_is_no_single_signal() -> None:
-    assert priority_table([_customer("C1", [])]).loc[0, "Why"] == NO_SIGNAL
+    assert priority_table([_customer("C1", [])]).loc[0, "Why it is listed"] == NO_SIGNAL
 
 
 def test_priority_table_keeps_the_probability_between_zero_and_one() -> None:
-    assert priority_table([_customer("C1", [])]).loc[0, "Churn probability"] == 0.4
+    assert priority_table([_customer("C1", [])]).loc[0, "Chance of leaving"] == 0.4
 
 
 def test_priority_table_of_nobody_is_an_empty_table_with_the_same_columns() -> None:
     table = priority_table([])
     assert table.empty
     assert "Customer" in table.columns
+
+
+def test_top_share_is_the_listed_loss_over_the_total_loss() -> None:
+    customers = [_customer("C1", []), _customer("C2", [])]  # 48_000 each
+    assert top_share(customers, 192_000.0) == 0.5
+
+
+def test_top_share_of_a_zero_total_is_zero_not_a_division_error() -> None:
+    assert top_share([_customer("C1", [])], 0.0) == 0.0
+    assert top_share([], 0.0) == 0.0
+
+
+def test_loss_by_segment_is_in_business_order_and_filtered_to_the_selection() -> None:
+    items = [
+        SegmentLossOut(segment="ENTERPRISE", expected_loss=500.0),
+        SegmentLossOut(segment="SMB", expected_loss=100.0),
+    ]
+    frame = loss_by_segment(items, ["ENTERPRISE", "SMB"])
+    assert list(frame["segment"]) == ["SMB", "ENTERPRISE"]
+    assert list(loss_by_segment(items, ["SMB"])["segment"]) == ["SMB"]
+
+
+def test_loss_by_segment_shows_a_selected_segment_without_loss_as_zero() -> None:
+    frame = loss_by_segment([], ["MID_MARKET"])
+    assert frame.loc[0, "expected_loss"] == 0.0
+
+
+def test_format_money_is_compact_and_uses_euro() -> None:
+    assert format_money(1_234_567) == "€1.2M"
+    assert format_money(48_000) == "€48K"
+    assert format_money(950) == "€950"
+    assert format_money(0) == "€0"
+
+
+def test_format_usage_change_is_signed() -> None:
+    assert format_usage_change(0.78) == "-22%"
+    assert format_usage_change(1.1) == "+10%"
+    assert format_usage_change(1.0) == "+0%"

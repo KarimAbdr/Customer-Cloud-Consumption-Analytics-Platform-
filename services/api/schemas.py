@@ -62,7 +62,13 @@ class PriorityCustomerOut(BaseModel):
     signals: list[str]
 
 
+class SegmentLossOut(BaseModel):
+    segment: Segment
+    expected_loss: float
+
+
 class PriorityListOut(BaseModel):
     customers_scored: int
     total_expected_loss: float
+    by_segment: list[SegmentLossOut]
     items: list[PriorityCustomerOut]

@@ -54,7 +54,7 @@ def test_signals_are_attached_to_each_customer() -> None:
 
 
 def test_usage_drop_is_reported_in_percent() -> None:
-    assert explain(0.81, 1, 1.0) == ["usage down 19% (last 30 days vs first 30)"]
+    assert explain(0.81, 1, 1.0) == ["usage down 19% vs. the start of the period"]
 
 
 def test_usage_above_the_threshold_is_not_a_signal() -> None:
@@ -62,7 +62,7 @@ def test_usage_above_the_threshold_is_not_a_signal() -> None:
 
 
 def test_many_tickets_are_compared_with_the_segment_average() -> None:
-    assert explain(1.0, 30, 10.0) == ["30 support tickets (3.0x segment average)"]
+    assert explain(1.0, 30, 10.0) == ["30 support tickets, 3.0x the segment average"]
 
 
 def test_usage_signal_comes_before_tickets() -> None:
@@ -73,3 +73,11 @@ def test_usage_signal_comes_before_tickets() -> None:
 
 def test_zero_segment_average_does_not_divide_by_zero() -> None:
     assert explain(1.0, 5, 0.0) == []
+
+
+def test_by_segment_sums_expected_loss_per_segment_and_adds_up_to_the_total() -> None:
+    result = build_priority(_active(), np.array([0.9, 0.5, 0.2, 0.5]), limit=1)
+    by_segment = {s.segment: s.expected_loss for s in result.by_segment}
+    assert by_segment["SMB"] == pytest.approx(1_080 + 1_200)
+    assert by_segment["ENTERPRISE"] == pytest.approx(24_000 + 30_000)
+    assert sum(by_segment.values()) == pytest.approx(result.total_expected_loss)

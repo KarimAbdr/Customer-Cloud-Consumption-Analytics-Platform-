@@ -100,7 +100,8 @@ def test_priority_sends_every_selected_segment_and_parses_the_answer() -> None:
     def respond(request: httpx.Request) -> httpx.Response:
         seen.append(request.url)
         return httpx.Response(
-            200, json={"customers_scored": 0, "total_expected_loss": 0, "items": []}
+            200,
+            json={"customers_scored": 0, "total_expected_loss": 0, "by_segment": [], "items": []},
         )
 
     api = ApiClient(httpx.Client(base_url="http://x", transport=httpx.MockTransport(respond)))

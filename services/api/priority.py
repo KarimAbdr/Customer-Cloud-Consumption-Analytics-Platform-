@@ -4,10 +4,12 @@ Expected loss = churn probability x annual contract value, so a likely loss of a
 outranks a near-certain loss of a tiny one.
 """
 
+from typing import cast
+
 import numpy as np
 import pandas as pd
 
-from services.api.schemas import PriorityCustomerOut, PriorityListOut
+from services.api.schemas import PriorityCustomerOut, PriorityListOut, Segment, SegmentLossOut
 
 # Same threshold as `is_at_risk` in the gold layer (usage_trend_ratio < 0.85).
 USAGE_DROP_THRESHOLD = 0.85
@@ -19,10 +21,10 @@ def explain(usage_trend_ratio: float, total_tickets: int, segment_avg_tickets: f
     signals: list[str] = []
     if usage_trend_ratio < USAGE_DROP_THRESHOLD:
         drop = round((1 - usage_trend_ratio) * 100)
-        signals.append(f"usage down {drop}% (last 30 days vs first 30)")
+        signals.append(f"usage down {drop}% vs. the start of the period")
     if segment_avg_tickets > 0 and total_tickets > TICKET_FACTOR * segment_avg_tickets:
         factor = total_tickets / segment_avg_tickets
-        signals.append(f"{total_tickets} support tickets ({factor:.1f}x segment average)")
+        signals.append(f"{total_tickets} support tickets, {factor:.1f}x the segment average")
     return signals
 
 
@@ -56,5 +58,9 @@ def build_priority(active: pd.DataFrame, probabilities: np.ndarray, limit: int) 
     return PriorityListOut(
         customers_scored=len(frame),
         total_expected_loss=float(frame["expected_loss"].sum()),
+        by_segment=[
+            SegmentLossOut(segment=cast(Segment, segment), expected_loss=float(loss))
+            for segment, loss in frame.groupby("segment")["expected_loss"].sum().items()
+        ],
         items=items,
     )
