@@ -36,7 +36,7 @@ synthetic generators
 | Gold | dbt-duckdb | `customer_features` (ML input) and `customer_360` (business view) |
 | ML | LightGBM, MLflow | Churn model, metrics and artifacts tracked per run |
 | Serving | FastAPI, Pydantic | Customer lookup/filtering, portfolio summary and churn prediction |
-| Dashboard | Streamlit | Thin client over the API: KPIs, ranked "who to call first" table with reasons, customer card, segment charts |
+| Dashboard | Streamlit | Thin client over the API: expected loss headline and KPIs, ranked "who to call first" table with reasons, customer card, expected loss by segment |
 
 ## Run it yourself
 
